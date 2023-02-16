@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Go Chat!</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <link
+    rel="stylesheet"
+    href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css"
+    /> 
+</head>
+<body>
+ <div class="container">
+   <div class="jumbotron">
+     <h1>Go Chat!</h1>
+   </div>
+   <form id="chat-form" class="form-inline" action="">
+    <div class="form-group">
+       <input
+        id="message"
+        type="text"
+        class="form-control"
+        placeholder="Enter message"
+       />
+     </div>
+    <button class="btn btn-primary" type="submit">Send</button>
+  </form>
+  <h3 id="usersender"></h3>
+   <div id="chat-text"></div>
+   </div>
+</body>
+<script type="text/javascript" src="app.js"></script>
+</html>

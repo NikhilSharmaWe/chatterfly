@@ -5,9 +5,8 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/NikhilSharmaWe/chatapp/controller"
 	"github.com/NikhilSharmaWe/chatapp/model"
-	"github.com/NikhilSharmaWe/chatapp/router"
-	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
 )
 
@@ -20,10 +19,11 @@ func main() {
 	}
 
 	port := os.Getenv("PORT")
-	r := mux.NewRouter()
-	router.RegisterRoutes(r)
+	http.Handle("/", http.FileServer(http.Dir("./public/signup")))
+	http.Handle("/chatbox", http.StripPrefix("/chatbox", http.FileServer(http.Dir("./public/chatbox"))))
+	http.HandleFunc("/websocket", controller.HandleConnections)
 	log.Print("Server starting at localhost:4444")
-	if err := http.ListenAndServe(":"+port, r); err != nil {
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatal(err)
 	}
 }

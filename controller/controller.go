@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -21,8 +22,29 @@ var (
 	}
 )
 
+func HandleChatBox(w http.ResponseWriter, r *http.Request) {
+	http.ServeFile(w, r, "public/chatbox.html")
+}
+
 func HandleConnections(w http.ResponseWriter, r *http.Request) {
-	var cb *model.ChatBox
+	fmt.Println("hello")
+	err := r.ParseForm()
+	if err != nil {
+		log.Fatalf("Unable to parse form")
+	}
+	username := r.PostForm.Get("username")
+	friend := r.PostForm.Get("friend")
+	password := r.PostForm.Get("password")
+
+	cb := model.ChatBox{
+		User:     username,
+		Friend:   friend,
+		Password: password,
+	}
+
+	storeChatBox(cb)
+	log.Printf("user: %v, friend: %v, password: %v\n", username, friend, password)
+
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -31,24 +53,19 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) {
 
 	defer ws.Close()
 
-	err = json.NewDecoder(r.Body).Decode(cb)
-	if err != nil {
-		log.Fatal("Unable to decode chatbox info")
-		w.WriteHeader(http.StatusInternalServerError)
-	}
+	ws.WriteJSON(cb)
 
-	go handleMessages(ws, cb)
+	go handleMessages(ws, &cb)
 
-	chatboxExists, correctPassword := chatBoxExistsAndPassword(cb, w, r)
+	chatboxExists, correctPassword := chatBoxExistsAndPassword(&cb, w, r)
 
 	if chatboxExists {
 		if correctPassword {
 			if rdb.Exists("chat").Val() != 0 {
-				sendPreviousChats(ws, cb)
+				sendPreviousChats(ws, &cb)
 			}
 		} else {
-			// make the user know that for these 2 friends chatbox, password is wrong
-			// may be we can redirect them to a error message and return the function
+			w.WriteHeader(http.StatusUnauthorized)
 		}
 	}
 
@@ -123,7 +140,7 @@ func messageClient(ws *websocket.Conn, chat model.Chat, cb *model.ChatBox) error
 	return nil
 }
 
-func storeInRedis(chat model.Chat) {
+func storeChat(chat model.Chat) {
 	json, err := json.Marshal(chat)
 	if err != nil {
 		panic(err)
@@ -133,10 +150,20 @@ func storeInRedis(chat model.Chat) {
 	}
 }
 
+func storeChatBox(cb model.ChatBox) {
+	json, err := json.Marshal(cb)
+	if err != nil {
+		panic(err)
+	}
+	if err = rdb.RPush("chatbox", json).Err(); err != nil {
+		panic(err)
+	}
+}
+
 func handleMessages(ws *websocket.Conn, cb *model.ChatBox) {
 	for {
 		chat := <-broadcaster
-		storeInRedis(chat)
+		storeChat(chat)
 		err := messageClient(ws, chat, cb)
 		if err != nil {
 			panic(err)
