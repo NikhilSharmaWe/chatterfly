@@ -38,7 +38,7 @@ window.addEventListener("DOMContentLoaded", (_) => {
           JSON.stringify({
             sender: sender,
             receiver: receiver,
-            password: message.value,
+            message: message.value,
           })
         );
         document.getElementById("message") = "";

@@ -20,7 +20,7 @@ func main() {
 
 	port := os.Getenv("PORT")
 	http.Handle("/", http.FileServer(http.Dir("./public/signup")))
-	http.Handle("/chatbox", http.StripPrefix("/chatbox", http.FileServer(http.Dir("./public/chatbox"))))
+	http.Handle("/chatbox/", http.StripPrefix("/chatbox", http.FileServer(http.Dir("./public/chatbox"))))
 	http.HandleFunc("/websocket", controller.HandleConnections)
 	log.Print("Server starting at localhost:4444")
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
