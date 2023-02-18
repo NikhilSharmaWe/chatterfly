@@ -3,174 +3,203 @@ package controller
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 
-	"github.com/NikhilSharmaWe/chatapp/model"
-	"github.com/gorilla/websocket"
+	"github.com/NikhilSharmaWe/chatterfly/model"
+	"github.com/go-redis/redis"
+	uuid "github.com/satori/go.uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var (
-	rdb         = model.RDB
-	clients     = make(map[*websocket.Conn]bool)
-	broadcaster = make(chan model.Chat)
-	upgrader    = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
-			return true
-		},
-	}
+	rdb *redis.Client
 )
 
-func HandleChatBox(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, "public/chatbox.html")
+func init() {
+	rdb = model.OpenRedis()
 }
 
-func HandleConnections(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("hello")
-	err := r.ParseForm()
-	if err != nil {
-		log.Fatalf("Unable to parse form")
+func Chat(w http.ResponseWriter, r *http.Request) {
+	if !alreadyLoggedIn(w, r) {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
 	}
-	username := r.PostForm.Get("username")
-	friend := r.PostForm.Get("friend")
-	password := r.PostForm.Get("password")
-
-	cb := model.ChatBox{
-		User:     username,
-		Friend:   friend,
-		Password: password,
-	}
-
-	storeChatBox(cb)
-	log.Printf("user: %v, friend: %v, password: %v\n", username, friend, password)
-
-	ws, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		panic(err)
-	}
-
-	defer ws.Close()
-
-	ws.WriteJSON(cb)
-
-	go handleMessages(ws, &cb)
-
-	chatboxExists, correctPassword := chatBoxExistsAndPassword(&cb, w, r)
-
-	if chatboxExists {
-		if correctPassword {
-			if rdb.Exists("chat").Val() != 0 {
-				sendPreviousChats(ws, &cb)
-			}
-		} else {
-			w.WriteHeader(http.StatusUnauthorized)
-		}
-	}
-
-	for {
-		var chat model.Chat
-		if err != ws.ReadJSON(&chat) {
-			panic(err)
-		}
-		broadcaster <- chat
-	}
+	cookie, _ := r.Cookie("chatterfly-cookie")
+	sId := cookie.Value
+	fmt.Printf("SessionId: %v\n", sId)
+	un := getUsernameFromSid(sId, w)
+	u, _ := getUserIfExists(w, un)
+	fmt.Printf("Username: %v, Firstname: %v, Lastname: %v", u.Username, u.Firstname, u.Lastname)
+	fmt.Fprintf(w, `Hello %v`, u.Firstname)
 }
 
-func chatBoxExistsAndPassword(cb *model.ChatBox, w http.ResponseWriter, r *http.Request) (bool, bool) {
-	var chatboxExists bool
-	var correctPassword bool
-
-	err := json.NewDecoder(r.Body).Decode(cb)
-	if err != nil {
-		log.Fatal("Unable to decode chatbox info")
-		w.WriteHeader(http.StatusInternalServerError)
+func Login(w http.ResponseWriter, r *http.Request) {
+	if alreadyLoggedIn(w, r) {
+		http.Redirect(w, r, "/chat", http.StatusSeeOther)
+		return
 	}
 
-	chatboxes, err := rdb.LRange("chatbox", 0, -1).Result()
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-
-		panic(err)
-	}
-
-	var existingChatBox *model.ChatBox
-
-	for _, chatbox := range chatboxes {
-		json.Unmarshal([]byte(chatbox), existingChatBox)
-		if (existingChatBox.User == cb.User && existingChatBox.Friend == cb.Friend) || (existingChatBox.User == cb.Friend && existingChatBox.Friend == cb.User) {
-			chatboxExists = true
-			if existingChatBox.Password == cb.Password {
-				correctPassword = true
-			}
+	if r.Method == http.MethodPost {
+		user := model.User{}
+		un := r.PostFormValue("username")
+		pw := r.PostFormValue("password")
+		user, usernameExists := getUserIfExists(w, un)
+		if !usernameExists {
+			log.Println("Username does not exists")
+			http.Error(w, "Username does not exists", http.StatusUnauthorized)
+			return
 		}
-	}
 
-	return chatboxExists, correctPassword
-}
-
-func sendPreviousChats(ws *websocket.Conn, cb *model.ChatBox) {
-	chats, err := rdb.LRange("chat", 0, -1).Result()
-	if err != nil {
-		panic(err)
-	}
-
-	// send previous messages
-	for _, chat := range chats {
-		var chatContent model.Chat
-		json.Unmarshal([]byte(chat), &chatContent)
-		err := messageClient(ws, chatContent, cb)
+		err := bcrypt.CompareHashAndPassword(user.Password, []byte(pw))
 		if err != nil {
-			panic(err)
+			log.Println("Username and/or password do not match")
+			http.Error(w, "Username and/or password do not match", http.StatusForbidden)
+			return
 		}
-	}
-}
-
-func messageClient(ws *websocket.Conn, chat model.Chat, cb *model.ChatBox) error {
-	if cb.User == chat.Sender && cb.Friend == chat.Receiver {
-		err := ws.WriteJSON(chat)
-		if err != nil && unsafeError(err) {
-			log.Printf("error: %v", err)
-			ws.Close()
-			delete(clients, ws)
-			return err
+		sId := uuid.NewV4()
+		session := model.Session{
+			SessionId: sId.String(),
+			Username:  un,
 		}
+		store("session", w, session)
+
+		http.SetCookie(w, &http.Cookie{
+			Name:  "chatterfly-cookie",
+			Value: sId.String(),
+		})
+
+		http.Redirect(w, r, "/chat", http.StatusSeeOther)
+		return
 	}
-	return nil
+	http.ServeFile(w, r, "./public/login/index.html")
 }
 
-func storeChat(chat model.Chat) {
-	json, err := json.Marshal(chat)
-	if err != nil {
-		panic(err)
+func Signup(w http.ResponseWriter, r *http.Request) {
+	if alreadyLoggedIn(w, r) {
+		http.Redirect(w, r, "/chat", http.StatusSeeOther)
+		return
 	}
-	if err = rdb.RPush("chat", json).Err(); err != nil {
-		panic(err)
-	}
-}
 
-func storeChatBox(cb model.ChatBox) {
-	json, err := json.Marshal(cb)
-	if err != nil {
-		panic(err)
-	}
-	if err = rdb.RPush("chatbox", json).Err(); err != nil {
-		panic(err)
-	}
-}
+	if r.Method == http.MethodPost {
+		un := r.PostFormValue("username")
+		pw := r.PostFormValue("password")
+		fn := r.PostFormValue("firstname")
+		ln := r.PostFormValue("lastname")
 
-func handleMessages(ws *websocket.Conn, cb *model.ChatBox) {
-	for {
-		chat := <-broadcaster
-		storeChat(chat)
-		err := messageClient(ws, chat, cb)
+		sId := uuid.NewV4()
+		session := model.Session{
+			SessionId: sId.String(),
+			Username:  un,
+		}
+		store("session", w, session)
+
+		bs, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.MinCost)
 		if err != nil {
-			panic(err)
+			log.Println(err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
 		}
+		user := model.User{
+			Username:  un,
+			Password:  bs,
+			Firstname: fn,
+			Lastname:  ln,
+		}
+		store("user", w, user)
+
+		http.SetCookie(w, &http.Cookie{
+			Name:  "chatterfly-cookie",
+			Value: sId.String(),
+		})
+		http.Redirect(w, r, "/chat", http.StatusSeeOther)
+		fmt.Println("hello")
+		return
+	}
+	http.ServeFile(w, r, "./public/signup/index.html")
+}
+
+func alreadyLoggedIn(w http.ResponseWriter, r *http.Request) bool {
+
+	cookie, err := r.Cookie("chatterfly-cookie")
+	if err == http.ErrNoCookie {
+		return false
+	}
+	var s model.Session
+	sId := cookie.Value
+	sessions, err := rdb.LRange("session", 0, -1).Result()
+	if err != nil {
+		http.Error(w, "Unable to get the sessions info", http.StatusInternalServerError)
+	}
+	for _, session := range sessions {
+		err := json.Unmarshal([]byte(session), &s)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Unable to marshal data", http.StatusInternalServerError)
+		}
+		if s.SessionId == sId {
+			return true
+		}
+	}
+	return false
+}
+
+func store(obj string, w http.ResponseWriter, value interface{}) {
+	json, err := json.Marshal(value)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Unable to marshal data", http.StatusInternalServerError)
+		panic(err)
+	}
+
+	if err = rdb.RPush(obj, json).Err(); err != nil {
+		log.Println(err)
+		http.Error(w, "Unable to push data", http.StatusInternalServerError)
+		panic(err)
 	}
 }
 
-func unsafeError(err error) bool {
-	return !websocket.IsCloseError(err, websocket.CloseGoingAway) && err != io.EOF
+func getUserIfExists(w http.ResponseWriter, un string) (model.User, bool) {
+	var u model.User
+	users, err := rdb.LRange("user", 0, -1).Result()
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Unable to get the users info", http.StatusInternalServerError)
+		panic(err)
+	}
+
+	for _, user := range users {
+		err := json.Unmarshal([]byte(user), &u)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Unable to marshal data", http.StatusInternalServerError)
+			panic(err)
+		}
+		if u.Username == un {
+			return u, true
+		}
+	}
+	return u, false
+}
+
+func getUsernameFromSid(sId string, w http.ResponseWriter) string {
+	var s model.Session
+	sessions, err := rdb.LRange("session", 0, -1).Result()
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Unable to get the sessions info", http.StatusInternalServerError)
+		panic(err)
+	}
+	for _, session := range sessions {
+		err := json.Unmarshal([]byte(session), &s)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Unable to marshal data", http.StatusInternalServerError)
+			panic(err)
+		}
+		if s.SessionId == sId {
+			return s.Username
+		}
+	}
+	return ""
 }

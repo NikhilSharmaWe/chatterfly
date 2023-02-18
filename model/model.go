@@ -8,14 +8,16 @@ import (
 	"github.com/joho/godotenv"
 )
 
-var (
-	RDB *redis.Client
-)
+type User struct {
+	Username  string `json:"username"`
+	Firstname string `json:"firstname"`
+	Lastname  string `json:"lastname"`
+	Password  []byte `json:"password"`
+}
 
-type ChatBox struct {
-	User     string `json:"user"`
-	Password string `json:"password"`
-	Friend   string `json:"friend"`
+type Session struct {
+	SessionId string `json:"sid"`
+	Username  string `json:"username"`
 }
 
 type Chat struct {
@@ -24,7 +26,7 @@ type Chat struct {
 	Message  string `json:"message"`
 }
 
-func OpenRedis() {
+func OpenRedis() *redis.Client {
 	err := godotenv.Load("vars.env")
 	if err != nil {
 		log.Fatal("Error loading .env file")
@@ -36,5 +38,6 @@ func OpenRedis() {
 		panic("Unable to parse url")
 	}
 
-	RDB = redis.NewClient(opts)
+	rdb := redis.NewClient(opts)
+	return rdb
 }
