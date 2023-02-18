@@ -21,6 +21,7 @@ func main() {
 	http.HandleFunc("/login", controller.Login)
 	http.HandleFunc("/signup", controller.Signup)
 	http.HandleFunc("/chat", controller.Chat)
+	http.HandleFunc("/logout", controller.Logout)
 
 	log.Println("Server starting at localhost: " + port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {

@@ -116,6 +116,22 @@ func Signup(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "./public/signup/index.html")
 }
 
+func Logout(w http.ResponseWriter, r *http.Request) {
+	if !alreadyLoggedIn(w, r) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	cookie := http.Cookie{
+		Name:   "chatterfly-cookie",
+		Value:  "",
+		MaxAge: -1,
+	}
+
+	http.SetCookie(w, &cookie)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
 func alreadyLoggedIn(w http.ResponseWriter, r *http.Request) bool {
 
 	cookie, err := r.Cookie("chatterfly-cookie")
