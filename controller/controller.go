@@ -27,10 +27,8 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 	}
 	cookie, _ := r.Cookie("chatterfly-cookie")
 	sId := cookie.Value
-	fmt.Printf("SessionId: %v\n", sId)
 	un := getUsernameFromSid(sId, w)
 	u, _ := getUserIfExists(w, un)
-	fmt.Printf("Username: %v, Firstname: %v, Lastname: %v", u.Username, u.Firstname, u.Lastname)
 	fmt.Fprintf(w, `Hello %v`, u.Firstname)
 }
 
@@ -113,7 +111,6 @@ func Signup(w http.ResponseWriter, r *http.Request) {
 			Value: sId.String(),
 		})
 		http.Redirect(w, r, "/chat", http.StatusSeeOther)
-		fmt.Println("hello")
 		return
 	}
 	http.ServeFile(w, r, "./public/signup/index.html")
