@@ -1,23 +1,29 @@
 package model
 
 import (
+	"context"
 	"log"
 	"os"
+	"time"
 
 	"github.com/go-redis/redis"
 	"github.com/joho/godotenv"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type User struct {
-	Username  string `json:"username"`
-	Firstname string `json:"firstname"`
-	Lastname  string `json:"lastname"`
-	Password  []byte `json:"password"`
+	ID        primitive.ObjectID `bson:"_id"`
+	CreatedAt time.Time          `bson:"created_at"`
+	Username  string             `bson:"username"`
+	Firstname string             `bson:"firstname"`
+	Lastname  string             `bson:"lastname"`
+	Password  []byte             `bson:"password"`
 }
 
 type Session struct {
-	SessionId string `json:"sid"`
-	Username  string `json:"username"`
+	Username string `json:"username"`
 }
 
 type Chat struct {
@@ -40,4 +46,20 @@ func OpenRedis() *redis.Client {
 
 	rdb := redis.NewClient(opts)
 	return rdb
+}
+
+func CreateMongoCollection(ctx context.Context) *mongo.Collection {
+	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017/")
+	client, err := mongo.Connect(ctx, clientOptions)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = client.Ping(ctx, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	collection := client.Database("UserData").Collection("users")
+	return collection
 }

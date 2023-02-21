@@ -1,76 +1,32 @@
 package controller
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/NikhilSharmaWe/chatterfly/model"
 	"github.com/go-redis/redis"
 	uuid "github.com/satori/go.uuid"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
 	"golang.org/x/crypto/bcrypt"
 )
 
 var (
-	rdb *redis.Client
+	rdb        *redis.Client
+	collection *mongo.Collection
+	ctx        = context.Background()
 )
 
 func init() {
 	rdb = model.OpenRedis()
-}
-
-func Chat(w http.ResponseWriter, r *http.Request) {
-	if !alreadyLoggedIn(w, r) {
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
-		return
-	}
-	cookie, _ := r.Cookie("chatterfly-cookie")
-	sId := cookie.Value
-	un := getUsernameFromSid(sId, w)
-	u, _ := getUserIfExists(w, un)
-	fmt.Fprintf(w, `Hello %v`, u.Firstname)
-}
-
-func Login(w http.ResponseWriter, r *http.Request) {
-	if alreadyLoggedIn(w, r) {
-		http.Redirect(w, r, "/chat", http.StatusSeeOther)
-		return
-	}
-
-	if r.Method == http.MethodPost {
-		user := model.User{}
-		un := r.PostFormValue("username")
-		pw := r.PostFormValue("password")
-		user, usernameExists := getUserIfExists(w, un)
-		if !usernameExists {
-			log.Println("Username does not exists")
-			http.Error(w, "Username does not exists", http.StatusUnauthorized)
-			return
-		}
-
-		err := bcrypt.CompareHashAndPassword(user.Password, []byte(pw))
-		if err != nil {
-			log.Println("Username and/or password do not match")
-			http.Error(w, "Username and/or password do not match", http.StatusForbidden)
-			return
-		}
-		sId := uuid.NewV4()
-		session := model.Session{
-			SessionId: sId.String(),
-			Username:  un,
-		}
-		store("session", w, session)
-
-		http.SetCookie(w, &http.Cookie{
-			Name:  "chatterfly-cookie",
-			Value: sId.String(),
-		})
-
-		http.Redirect(w, r, "/chat", http.StatusSeeOther)
-		return
-	}
-	http.ServeFile(w, r, "./public/login/index.html")
+	collection = model.CreateMongoCollection(ctx)
 }
 
 func Signup(w http.ResponseWriter, r *http.Request) {
@@ -85,12 +41,18 @@ func Signup(w http.ResponseWriter, r *http.Request) {
 		fn := r.PostFormValue("firstname")
 		ln := r.PostFormValue("lastname")
 
-		sId := uuid.NewV4()
-		session := model.Session{
-			SessionId: sId.String(),
-			Username:  un,
+		du := getUser(w, un)
+		if du.Username == un {
+			log.Println("Username already present")
+			http.Error(w, "Username already present", http.StatusForbidden)
+			return
 		}
-		store("session", w, session)
+
+		sId := "session-" + uuid.NewV4().String()
+		session := model.Session{
+			Username: un,
+		}
+		store(sId, w, session)
 
 		bs, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.MinCost)
 		if err != nil {
@@ -99,21 +61,59 @@ func Signup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		user := model.User{
+			ID:        primitive.NewObjectID(),
+			CreatedAt: time.Now(),
 			Username:  un,
 			Password:  bs,
 			Firstname: fn,
 			Lastname:  ln,
 		}
-		store("user", w, user)
+		// store(un, w, user)
+		createUser(w, &user)
 
 		http.SetCookie(w, &http.Cookie{
 			Name:  "chatterfly-cookie",
-			Value: sId.String(),
+			Value: sId,
 		})
 		http.Redirect(w, r, "/chat", http.StatusSeeOther)
 		return
 	}
 	http.ServeFile(w, r, "./public/signup/index.html")
+}
+
+func Login(w http.ResponseWriter, r *http.Request) {
+	if alreadyLoggedIn(w, r) {
+		http.Redirect(w, r, "/chat", http.StatusSeeOther)
+		return
+	}
+
+	if r.Method == http.MethodPost {
+		un := r.PostFormValue("username")
+		pw := r.PostFormValue("password")
+		user := getUser(w, un)
+		fmt.Println(user)
+
+		err := bcrypt.CompareHashAndPassword(user.Password, []byte(pw))
+		if err != nil {
+			log.Println("Username and/or password do not match")
+			http.Error(w, "Username and/or password do not match", http.StatusForbidden)
+			return
+		}
+		sId := "session-" + uuid.NewV4().String()
+		session := model.Session{
+			Username: un,
+		}
+		store(sId, w, session)
+
+		http.SetCookie(w, &http.Cookie{
+			Name:  "chatterfly-cookie",
+			Value: sId,
+		})
+
+		http.Redirect(w, r, "/chat", http.StatusSeeOther)
+		return
+	}
+	http.ServeFile(w, r, "./public/login/index.html")
 }
 
 func Logout(w http.ResponseWriter, r *http.Request) {
@@ -122,97 +122,119 @@ func Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cookie := http.Cookie{
+	cookie, _ := r.Cookie("chatterfly-cookie")
+	sId := cookie.Value
+	delete(sId, w)
+	cookie = &http.Cookie{
 		Name:   "chatterfly-cookie",
 		Value:  "",
 		MaxAge: -1,
 	}
 
-	http.SetCookie(w, &cookie)
+	http.SetCookie(w, cookie)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-func alreadyLoggedIn(w http.ResponseWriter, r *http.Request) bool {
+func Chat(w http.ResponseWriter, r *http.Request) {
+	if !alreadyLoggedIn(w, r) {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	var s model.Session
+	cookie, _ := r.Cookie("chatterfly-cookie")
+	sId := cookie.Value
+	get(sId, w, &s)
 
+	var u model.User
+	un := s.Username
+	u = getUser(w, un)
+
+	fmt.Fprintf(w, "Hello %v %v", u.Firstname, u.Lastname)
+}
+
+func alreadyLoggedIn(w http.ResponseWriter, r *http.Request) bool {
 	cookie, err := r.Cookie("chatterfly-cookie")
 	if err == http.ErrNoCookie {
 		return false
 	}
-	var s model.Session
+
 	sId := cookie.Value
-	sessions, err := rdb.LRange("session", 0, -1).Result()
+	_, err = rdb.Get(sId).Result()
 	if err != nil {
-		http.Error(w, "Unable to get the sessions info", http.StatusInternalServerError)
-	}
-	for _, session := range sessions {
-		err := json.Unmarshal([]byte(session), &s)
-		if err != nil {
+		if errors.Is(err, redis.Nil) {
 			log.Println(err)
-			http.Error(w, "Unable to marshal data", http.StatusInternalServerError)
+			http.Error(w, "Entity not found", http.StatusInternalServerError)
+		} else {
+			log.Println(err)
+			http.Error(w, "Unable to get the session info", http.StatusInternalServerError)
 		}
-		if s.SessionId == sId {
-			return true
-		}
+		return false
 	}
-	return false
+	return true
 }
 
-func store(obj string, w http.ResponseWriter, value interface{}) {
+// functions dealing with redis operations
+func store(key string, w http.ResponseWriter, value interface{}) {
 	json, err := json.Marshal(value)
 	if err != nil {
 		log.Println(err)
 		http.Error(w, "Unable to marshal data", http.StatusInternalServerError)
 		panic(err)
 	}
-
-	if err = rdb.RPush(obj, json).Err(); err != nil {
+	if err = rdb.Set(key, json, 0).Err(); err != nil {
 		log.Println(err)
-		http.Error(w, "Unable to push data", http.StatusInternalServerError)
+		http.Error(w, "Unable to add data", http.StatusInternalServerError)
 		panic(err)
 	}
 }
 
-func getUserIfExists(w http.ResponseWriter, un string) (model.User, bool) {
-	var u model.User
-	users, err := rdb.LRange("user", 0, -1).Result()
+func delete(key string, w http.ResponseWriter) {
+	_, err := rdb.Del(key).Result()
 	if err != nil {
 		log.Println(err)
-		http.Error(w, "Unable to get the users info", http.StatusInternalServerError)
-		panic(err)
+		http.Error(w, "Unable to delete data", http.StatusInternalServerError)
 	}
-
-	for _, user := range users {
-		err := json.Unmarshal([]byte(user), &u)
-		if err != nil {
-			log.Println(err)
-			http.Error(w, "Unable to marshal data", http.StatusInternalServerError)
-			panic(err)
-		}
-		if u.Username == un {
-			return u, true
-		}
-	}
-	return u, false
 }
 
-func getUsernameFromSid(sId string, w http.ResponseWriter) string {
-	var s model.Session
-	sessions, err := rdb.LRange("session", 0, -1).Result()
+func get(key string, w http.ResponseWriter, obj interface{}) error {
+	jsonObj, err := rdb.Get(key).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			log.Println(err)
+			http.Error(w, "Entity not found", http.StatusInternalServerError)
+			return err
+		} else {
+			log.Println(err)
+			http.Error(w, "Unable to get the obj", http.StatusInternalServerError)
+			return err
+		}
+	}
+
+	err = json.Unmarshal([]byte(jsonObj), obj)
 	if err != nil {
 		log.Println(err)
-		http.Error(w, "Unable to get the sessions info", http.StatusInternalServerError)
+		http.Error(w, "Error while unmarshaling obj", http.StatusInternalServerError)
+		return err
+	}
+	return nil
+}
+
+// function dealing with mongo operations
+func createUser(w http.ResponseWriter, user *model.User) {
+	_, err := collection.InsertOne(ctx, user)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Error while creating new user", http.StatusInternalServerError)
 		panic(err)
 	}
-	for _, session := range sessions {
-		err := json.Unmarshal([]byte(session), &s)
-		if err != nil {
-			log.Println(err)
-			http.Error(w, "Unable to marshal data", http.StatusInternalServerError)
-			panic(err)
-		}
-		if s.SessionId == sId {
-			return s.Username
-		}
+}
+
+func getUser(w http.ResponseWriter, un string) model.User {
+	user := model.User{}
+	filter := bson.M{"username": un}
+	err := collection.FindOne(context.Background(), filter).Decode(&user)
+	if err != nil {
+		return user
 	}
-	return ""
+	return user
 }
