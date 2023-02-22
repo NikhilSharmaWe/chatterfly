@@ -5,7 +5,8 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/NikhilSharmaWe/chatterfly/controller"
+	"github.com/NikhilSharmaWe/chatterfly/router"
+	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
 )
 
@@ -14,17 +15,12 @@ func main() {
 	if err != nil {
 		log.Println("Error loading .env file")
 	}
+	r := mux.NewRouter()
+	router.RegisterRoutes(r)
 
 	port := os.Getenv("PORT")
-	http.Handle("/", http.FileServer(http.Dir("./public/home")))
-	http.Handle("/favicon.ico", http.NotFoundHandler())
-	http.HandleFunc("/login", controller.Login)
-	http.HandleFunc("/signup", controller.Signup)
-	http.HandleFunc("/chat", controller.Chat)
-	http.HandleFunc("/logout", controller.Logout)
-
 	log.Println("Server starting at localhost: " + port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+	if err := http.ListenAndServe(":"+port, r); err != nil {
 		log.Println(err)
 	}
 }

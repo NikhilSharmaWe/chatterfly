@@ -11,6 +11,7 @@ import (
 
 	"github.com/NikhilSharmaWe/chatterfly/model"
 	"github.com/go-redis/redis"
+	"github.com/gorilla/mux"
 	uuid "github.com/satori/go.uuid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -19,19 +20,21 @@ import (
 )
 
 var (
-	rdb        *redis.Client
-	collection *mongo.Collection
-	ctx        = context.Background()
+	rdb                *redis.Client
+	userCollection     *mongo.Collection
+	chatroomCollection *mongo.Collection
+	ctx                = context.Background()
 )
 
 func init() {
 	rdb = model.OpenRedis()
-	collection = model.CreateMongoCollection(ctx)
+	userCollection = model.CreateMongoCollection(ctx, "user-data")
+	chatroomCollection = model.CreateMongoCollection(ctx, "chat-room")
 }
 
 func Signup(w http.ResponseWriter, r *http.Request) {
 	if alreadyLoggedIn(w, r) {
-		http.Redirect(w, r, "/chat", http.StatusSeeOther)
+		http.Redirect(w, r, "/chatroom", http.StatusSeeOther)
 		return
 	}
 
@@ -52,7 +55,7 @@ func Signup(w http.ResponseWriter, r *http.Request) {
 		session := model.Session{
 			Username: un,
 		}
-		store(sId, w, session)
+		storeInRedis(sId, w, session)
 
 		bs, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.MinCost)
 		if err != nil {
@@ -69,13 +72,13 @@ func Signup(w http.ResponseWriter, r *http.Request) {
 			Lastname:  ln,
 		}
 		// store(un, w, user)
-		createUser(w, &user)
+		storeInMongo(w, userCollection, &user)
 
 		http.SetCookie(w, &http.Cookie{
 			Name:  "chatterfly-cookie",
 			Value: sId,
 		})
-		http.Redirect(w, r, "/chat", http.StatusSeeOther)
+		http.Redirect(w, r, "/chatroom", http.StatusSeeOther)
 		return
 	}
 	http.ServeFile(w, r, "./public/signup/index.html")
@@ -83,7 +86,7 @@ func Signup(w http.ResponseWriter, r *http.Request) {
 
 func Login(w http.ResponseWriter, r *http.Request) {
 	if alreadyLoggedIn(w, r) {
-		http.Redirect(w, r, "/chat", http.StatusSeeOther)
+		http.Redirect(w, r, "/chatroom", http.StatusSeeOther)
 		return
 	}
 
@@ -103,14 +106,14 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		session := model.Session{
 			Username: un,
 		}
-		store(sId, w, session)
+		storeInRedis(sId, w, session)
 
 		http.SetCookie(w, &http.Cookie{
 			Name:  "chatterfly-cookie",
 			Value: sId,
 		})
 
-		http.Redirect(w, r, "/chat", http.StatusSeeOther)
+		http.Redirect(w, r, "/chatroom", http.StatusSeeOther)
 		return
 	}
 	http.ServeFile(w, r, "./public/login/index.html")
@@ -124,7 +127,7 @@ func Logout(w http.ResponseWriter, r *http.Request) {
 
 	cookie, _ := r.Cookie("chatterfly-cookie")
 	sId := cookie.Value
-	delete(sId, w)
+	deleteInRedis(sId, w)
 	cookie = &http.Cookie{
 		Name:   "chatterfly-cookie",
 		Value:  "",
@@ -143,13 +146,37 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 	var s model.Session
 	cookie, _ := r.Cookie("chatterfly-cookie")
 	sId := cookie.Value
-	get(sId, w, &s)
+	getInRedis(sId, w, &s)
 
 	var u model.User
 	un := s.Username
 	u = getUser(w, un)
+	fmt.Println(u)
 
-	fmt.Fprintf(w, "Hello %v %v", u.Firstname, u.Lastname)
+	if r.Method == http.MethodPost {
+		name := r.PostFormValue("name")
+		crKey := "chatroom-" + uuid.NewV4().String()
+		cr := model.ChatRoom{
+			ChatRoomName: name,
+			Key:          crKey,
+		}
+		storeInMongo(w, chatroomCollection, &cr)
+		http.Redirect(w, r, fmt.Sprintf("/chatroom/%v", crKey), http.StatusSeeOther)
+		return
+	}
+	http.ServeFile(w, r, "./public/chat/index.html")
+}
+
+func ChatRoom(w http.ResponseWriter, r *http.Request) {
+	if !alreadyLoggedIn(w, r) {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	params := mux.Vars(r)
+	crKey := params["crKey"]
+	chatRoom := getChatRoom(w, crKey)
+	fmt.Println(chatRoom)
+	fmt.Fprintf(w, "ChatRoomName: %v\nChatRoomKey: %v", chatRoom.ChatRoomName, chatRoom.Key)
 }
 
 func alreadyLoggedIn(w http.ResponseWriter, r *http.Request) bool {
@@ -174,7 +201,7 @@ func alreadyLoggedIn(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // functions dealing with redis operations
-func store(key string, w http.ResponseWriter, value interface{}) {
+func storeInRedis(key string, w http.ResponseWriter, value interface{}) {
 	json, err := json.Marshal(value)
 	if err != nil {
 		log.Println(err)
@@ -188,7 +215,7 @@ func store(key string, w http.ResponseWriter, value interface{}) {
 	}
 }
 
-func delete(key string, w http.ResponseWriter) {
+func deleteInRedis(key string, w http.ResponseWriter) {
 	_, err := rdb.Del(key).Result()
 	if err != nil {
 		log.Println(err)
@@ -196,7 +223,7 @@ func delete(key string, w http.ResponseWriter) {
 	}
 }
 
-func get(key string, w http.ResponseWriter, obj interface{}) error {
+func getInRedis(key string, w http.ResponseWriter, obj interface{}) error {
 	jsonObj, err := rdb.Get(key).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
@@ -220,11 +247,11 @@ func get(key string, w http.ResponseWriter, obj interface{}) error {
 }
 
 // function dealing with mongo operations
-func createUser(w http.ResponseWriter, user *model.User) {
-	_, err := collection.InsertOne(ctx, user)
+func storeInMongo(w http.ResponseWriter, collection *mongo.Collection, value interface{}) {
+	_, err := collection.InsertOne(ctx, value)
 	if err != nil {
 		log.Println(err)
-		http.Error(w, "Error while creating new user", http.StatusInternalServerError)
+		http.Error(w, "Error while adding new data in mongo", http.StatusInternalServerError)
 		panic(err)
 	}
 }
@@ -232,9 +259,21 @@ func createUser(w http.ResponseWriter, user *model.User) {
 func getUser(w http.ResponseWriter, un string) model.User {
 	user := model.User{}
 	filter := bson.M{"username": un}
-	err := collection.FindOne(context.Background(), filter).Decode(&user)
+	err := userCollection.FindOne(context.Background(), filter).Decode(&user)
 	if err != nil {
 		return user
 	}
 	return user
 }
+
+func getChatRoom(w http.ResponseWriter, key string) model.ChatRoom {
+	chatRoom := model.ChatRoom{}
+	filter := bson.M{"key": key}
+	err := chatroomCollection.FindOne(context.Background(), filter).Decode(&chatRoom)
+	if err != nil {
+		return chatRoom
+	}
+	return chatRoom
+}
+
+// func createInMongo(w http.)

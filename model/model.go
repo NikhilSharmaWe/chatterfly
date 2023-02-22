@@ -14,7 +14,7 @@ import (
 )
 
 type User struct {
-	ID        primitive.ObjectID `bson:"_id"`
+	ID        primitive.ObjectID `bson:"_id,omitempty"`
 	CreatedAt time.Time          `bson:"created_at"`
 	Username  string             `bson:"username"`
 	Firstname string             `bson:"firstname"`
@@ -26,10 +26,20 @@ type Session struct {
 	Username string `json:"username"`
 }
 
+// key -> chatroom -> chat
+
+type ChatRoom struct {
+	ID           primitive.ObjectID `bson:"_id,omitempty"`
+	CreatedAt    time.Time          `bson:"created_at"`
+	Key          string             `bson:"key"`
+	ChatRoomName string             `bson:"chatroomname"`
+}
+
 type Chat struct {
-	Sender   string `json:"sender"`
-	Receiver string `json:"receiver"`
-	Message  string `json:"message"`
+	ID        primitive.ObjectID `bson:"_id,omitempty"`
+	CreatedAt time.Time          `bson:"created_at"`
+	ChatRoom  string             `json:"chat"`
+	Message   string             `json:"message"`
 }
 
 func OpenRedis() *redis.Client {
@@ -48,7 +58,7 @@ func OpenRedis() *redis.Client {
 	return rdb
 }
 
-func CreateMongoCollection(ctx context.Context) *mongo.Collection {
+func CreateMongoCollection(ctx context.Context, name string) *mongo.Collection {
 	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017/")
 	client, err := mongo.Connect(ctx, clientOptions)
 	if err != nil {
@@ -60,6 +70,6 @@ func CreateMongoCollection(ctx context.Context) *mongo.Collection {
 		log.Fatal(err)
 	}
 
-	collection := client.Database("UserData").Collection("users")
+	collection := client.Database(name).Collection("users")
 	return collection
 }
