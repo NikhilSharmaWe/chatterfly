@@ -143,19 +143,10 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	var s model.Session
-	cookie, _ := r.Cookie("chatterfly-cookie")
-	sId := cookie.Value
-	getInRedis(sId, w, &s)
-
-	var u model.User
-	un := s.Username
-	u = getUser(w, un)
-	fmt.Println(u)
 
 	if r.Method == http.MethodPost {
 		name := r.PostFormValue("name")
-		crKey := "chatroom-" + uuid.NewV4().String()
+		crKey := uuid.NewV4().String()
 		cr := model.ChatRoom{
 			ChatRoomName: name,
 			Key:          crKey,
@@ -175,7 +166,6 @@ func ChatRoom(w http.ResponseWriter, r *http.Request) {
 	params := mux.Vars(r)
 	crKey := params["crKey"]
 	chatRoom := getChatRoom(w, crKey)
-	fmt.Println(chatRoom)
 	fmt.Fprintf(w, "ChatRoomName: %v\nChatRoomKey: %v", chatRoom.ChatRoomName, chatRoom.Key)
 }
 
@@ -275,5 +265,3 @@ func getChatRoom(w http.ResponseWriter, key string) model.ChatRoom {
 	}
 	return chatRoom
 }
-
-// func createInMongo(w http.)
