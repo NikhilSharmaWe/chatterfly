@@ -12,6 +12,7 @@ import (
 	"github.com/NikhilSharmaWe/chatterfly/model"
 	"github.com/go-redis/redis"
 	"github.com/gorilla/mux"
+	"github.com/gorilla/websocket"
 	uuid "github.com/satori/go.uuid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -23,13 +24,77 @@ var (
 	rdb                *redis.Client
 	userCollection     *mongo.Collection
 	chatroomCollection *mongo.Collection
+	chatCollection     *mongo.Collection
 	ctx                = context.Background()
+	clients            = make(map[*websocket.Conn]bool)
+	broadcaster        = make(chan model.Chat)
+	upgrader           = websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+	}
 )
 
+type Connection struct {
+	ChatRoomKey string
+	Conn        *websocket.Conn
+}
+
+// type server struct {
+// 	chatroom string
+// 	conns    map[*websocket.Conn]bool
+// }
+
+// func newServer(chatroom string) *server {
+// 	return &server{
+// 		chatroom: chatroom,
+// 		conns:    make(map[*websocket.Conn]bool),
+// 	}
+// }
+
+// func (s *server) handleWS(ws *websocket.Conn) {
+
+// }
+
+func HandleConnections(w http.ResponseWriter, r *http.Request) {
+	if alreadyLoggedIn(w, r) {
+		http.Redirect(w, r, "/chatroom", http.StatusSeeOther)
+		return
+	}
+	params := mux.Vars(r)
+	crKey := params["crKey"]
+	ws, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	defer ws.Close()
+	clients[ws] = true
+
+	connection := Connection{
+		ChatRoomKey: crKey,
+		Conn:        ws,
+	}
+
+	chat := model.Chat{}
+	filter := bson.M{"key": crKey}
+	err = chatCollection.FindOne(context.Background(), filter).Decode(&chat)
+	if err == nil {
+		connection.sendOldChat(w, r)
+	}
+
+}
+
+func (conn Connection) sendOldChat(w http.ResponseWriter, r *http.Request) {
+
+}
 func init() {
 	rdb = model.OpenRedis()
 	userCollection = model.CreateMongoCollection(ctx, "user-data")
 	chatroomCollection = model.CreateMongoCollection(ctx, "chat-room")
+	chatCollection = model.CreateMongoCollection(ctx, "chat")
 }
 
 func Signup(w http.ResponseWriter, r *http.Request) {
@@ -264,4 +329,8 @@ func getChatRoom(w http.ResponseWriter, key string) model.ChatRoom {
 		return chatRoom
 	}
 	return chatRoom
+}
+
+func getChats(w http.ResponseWriter, crKey string) {
+
 }
