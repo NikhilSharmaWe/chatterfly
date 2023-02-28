@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/NikhilSharmaWe/chatterfly/controller"
 	"github.com/NikhilSharmaWe/chatterfly/router"
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
@@ -17,6 +18,7 @@ func main() {
 	}
 	r := mux.NewRouter()
 	router.RegisterRoutes(r)
+	go controller.HandleMessages() // I have added it here, since it needs to be run only once
 
 	port := os.Getenv("PORT")
 	log.Println("Server starting at localhost: " + port)
