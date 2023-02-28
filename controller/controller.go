@@ -55,12 +55,7 @@ func Signup(w http.ResponseWriter, r *http.Request) {
 		fn := r.PostFormValue("firstname")
 		ln := r.PostFormValue("lastname")
 
-		du, err := getUser(w, un)
-		if err != nil {
-			log.Println(err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
+		du := getUser(w, un)
 		if du.Username == un {
 			log.Println("Username already present")
 			http.Error(w, "Username already present", http.StatusForbidden)
@@ -71,7 +66,7 @@ func Signup(w http.ResponseWriter, r *http.Request) {
 		session := model.Session{
 			Username: un,
 		}
-		err = storeInRedis(sId, w, session)
+		err := storeInRedis(sId, w, session)
 		if err != nil {
 			log.Println(err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -119,15 +114,9 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		un := r.PostFormValue("username")
 		pw := r.PostFormValue("password")
-		user, err := getUser(w, un)
-		if err != nil {
-			log.Println(err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-		fmt.Println(user)
+		user := getUser(w, un)
 
-		err = bcrypt.CompareHashAndPassword(user.Password, []byte(pw))
+		err := bcrypt.CompareHashAndPassword(user.Password, []byte(pw))
 		if err != nil {
 			log.Println("Username and/or password do not match")
 			http.Error(w, "Username and/or password do not match", http.StatusForbidden)
@@ -321,14 +310,11 @@ func storeInMongo(collection *mongo.Collection, value interface{}) error {
 	return nil
 }
 
-func getUser(w http.ResponseWriter, un string) (model.User, error) {
+func getUser(w http.ResponseWriter, un string) model.User {
 	user := model.User{}
 	filter := bson.M{"username": un}
-	err := userCollection.FindOne(context.Background(), filter).Decode(&user)
-	if err != nil {
-		return user, err
-	}
-	return user, nil
+	userCollection.FindOne(context.Background(), filter).Decode(&user)
+	return user
 }
 
 func getChatRoom(w http.ResponseWriter, key string) (model.ChatRoom, error) {
