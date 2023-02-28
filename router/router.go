@@ -15,4 +15,5 @@ var RegisterRoutes = func(r *mux.Router) {
 	r.HandleFunc("/chatroom", controller.Chat)
 	r.HandleFunc("/chatroom/{crKey}", controller.ChatRoom)
 	r.HandleFunc("/logout", controller.Logout)
+	r.HandleFunc("/websocket", controller.HandleConnections)
 }

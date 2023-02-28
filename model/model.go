@@ -38,6 +38,7 @@ type ChatRoom struct {
 type Chat struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty"`
 	CreatedAt time.Time          `bson:"created_at"`
+	Key       string             `bson:"key"`
 	ChatRoom  string             `json:"chat"`
 	Message   string             `json:"message"`
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/NikhilSharmaWe/chatterfly/model"
 	"github.com/go-redis/redis"
 	"github.com/gorilla/mux"
+	"github.com/gorilla/websocket"
 	uuid "github.com/satori/go.uuid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -23,13 +25,22 @@ var (
 	rdb                *redis.Client
 	userCollection     *mongo.Collection
 	chatroomCollection *mongo.Collection
+	chatCollection     *mongo.Collection
 	ctx                = context.Background()
+	clients            = make(map[*websocket.Conn]string) //stores client with the chatRoomKey
+	broadcaster        = make(chan model.Chat)
+	upgrader           = websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+	}
 )
 
 func init() {
 	rdb = model.OpenRedis()
 	userCollection = model.CreateMongoCollection(ctx, "user-data")
 	chatroomCollection = model.CreateMongoCollection(ctx, "chat-room")
+	chatCollection = model.CreateMongoCollection(ctx, "chat")
 }
 
 func Signup(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +55,12 @@ func Signup(w http.ResponseWriter, r *http.Request) {
 		fn := r.PostFormValue("firstname")
 		ln := r.PostFormValue("lastname")
 
-		du := getUser(w, un)
+		du, err := getUser(w, un)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 		if du.Username == un {
 			log.Println("Username already present")
 			http.Error(w, "Username already present", http.StatusForbidden)
@@ -55,7 +71,12 @@ func Signup(w http.ResponseWriter, r *http.Request) {
 		session := model.Session{
 			Username: un,
 		}
-		storeInRedis(sId, w, session)
+		err = storeInRedis(sId, w, session)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 
 		bs, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.MinCost)
 		if err != nil {
@@ -72,7 +93,12 @@ func Signup(w http.ResponseWriter, r *http.Request) {
 			Lastname:  ln,
 		}
 		// store(un, w, user)
-		storeInMongo(w, userCollection, &user)
+		err = storeInMongo(userCollection, &user)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 
 		http.SetCookie(w, &http.Cookie{
 			Name:  "chatterfly-cookie",
@@ -93,10 +119,15 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		un := r.PostFormValue("username")
 		pw := r.PostFormValue("password")
-		user := getUser(w, un)
+		user, err := getUser(w, un)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 		fmt.Println(user)
 
-		err := bcrypt.CompareHashAndPassword(user.Password, []byte(pw))
+		err = bcrypt.CompareHashAndPassword(user.Password, []byte(pw))
 		if err != nil {
 			log.Println("Username and/or password do not match")
 			http.Error(w, "Username and/or password do not match", http.StatusForbidden)
@@ -106,7 +137,12 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		session := model.Session{
 			Username: un,
 		}
-		storeInRedis(sId, w, session)
+		err = storeInRedis(sId, w, session)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 
 		http.SetCookie(w, &http.Cookie{
 			Name:  "chatterfly-cookie",
@@ -151,7 +187,12 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 			ChatRoomName: name,
 			Key:          crKey,
 		}
-		storeInMongo(w, chatroomCollection, &cr)
+		err := storeInMongo(chatroomCollection, &cr)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 		http.Redirect(w, r, fmt.Sprintf("/chatroom/%v", crKey), http.StatusSeeOther)
 		return
 	}
@@ -165,8 +206,53 @@ func ChatRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	params := mux.Vars(r)
 	crKey := params["crKey"]
-	chatRoom := getChatRoom(w, crKey)
+	chatRoom, err := getChatRoom(w, crKey)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 	fmt.Fprintf(w, "ChatRoomName: %v\nChatRoomKey: %v", chatRoom.ChatRoomName, chatRoom.Key)
+}
+
+func HandleConnections(w http.ResponseWriter, r *http.Request) {
+	if alreadyLoggedIn(w, r) {
+		http.Redirect(w, r, "/chatroom", http.StatusSeeOther)
+		return
+	}
+	params := mux.Vars(r)
+	crKey := params["crKey"]
+	ws, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	defer ws.Close()
+	clients[ws] = crKey
+
+	chat := model.Chat{}
+	filter := bson.M{"key": crKey}
+	err = chatCollection.FindOne(context.Background(), filter).Decode(&chat)
+	if err == nil {
+		err := sendOldChats(crKey, ws)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	for {
+		var msg model.Chat
+		err := ws.ReadJSON(&msg)
+		if err != nil {
+			delete(clients, ws)
+			break
+		}
+		broadcaster <- msg
+	}
 }
 
 func alreadyLoggedIn(w http.ResponseWriter, r *http.Request) bool {
@@ -191,18 +277,17 @@ func alreadyLoggedIn(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // functions dealing with redis operations
-func storeInRedis(key string, w http.ResponseWriter, value interface{}) {
+func storeInRedis(key string, w http.ResponseWriter, value interface{}) error {
 	json, err := json.Marshal(value)
 	if err != nil {
 		log.Println(err)
-		http.Error(w, "Unable to marshal data", http.StatusInternalServerError)
-		panic(err)
+		return err
 	}
 	if err = rdb.Set(key, json, 0).Err(); err != nil {
 		log.Println(err)
-		http.Error(w, "Unable to add data", http.StatusInternalServerError)
-		panic(err)
+		return err
 	}
+	return nil
 }
 
 func deleteInRedis(key string, w http.ResponseWriter) {
@@ -213,55 +298,126 @@ func deleteInRedis(key string, w http.ResponseWriter) {
 	}
 }
 
-func getInRedis(key string, w http.ResponseWriter, obj interface{}) error {
+func getInRedis(key string, obj interface{}) error {
 	jsonObj, err := rdb.Get(key).Result()
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			log.Println(err)
-			http.Error(w, "Entity not found", http.StatusInternalServerError)
-			return err
-		} else {
-			log.Println(err)
-			http.Error(w, "Unable to get the obj", http.StatusInternalServerError)
-			return err
-		}
+		return err
 	}
 
 	err = json.Unmarshal([]byte(jsonObj), obj)
 	if err != nil {
-		log.Println(err)
-		http.Error(w, "Error while unmarshaling obj", http.StatusInternalServerError)
 		return err
 	}
 	return nil
 }
 
 // function dealing with mongo operations
-func storeInMongo(w http.ResponseWriter, collection *mongo.Collection, value interface{}) {
+func storeInMongo(collection *mongo.Collection, value interface{}) error {
 	_, err := collection.InsertOne(ctx, value)
 	if err != nil {
 		log.Println(err)
-		http.Error(w, "Error while adding new data in mongo", http.StatusInternalServerError)
-		panic(err)
+		return err
 	}
+	return nil
 }
 
-func getUser(w http.ResponseWriter, un string) model.User {
+func getUser(w http.ResponseWriter, un string) (model.User, error) {
 	user := model.User{}
 	filter := bson.M{"username": un}
 	err := userCollection.FindOne(context.Background(), filter).Decode(&user)
 	if err != nil {
-		return user
+		return user, err
 	}
-	return user
+	return user, nil
 }
 
-func getChatRoom(w http.ResponseWriter, key string) model.ChatRoom {
+func getChatRoom(w http.ResponseWriter, key string) (model.ChatRoom, error) {
 	chatRoom := model.ChatRoom{}
 	filter := bson.M{"key": key}
 	err := chatroomCollection.FindOne(context.Background(), filter).Decode(&chatRoom)
 	if err != nil {
-		return chatRoom
+		return chatRoom, err
 	}
-	return chatRoom
+	return chatRoom, nil
+}
+
+func getChats(crKey string) ([]*model.Chat, error) {
+	var chats []*model.Chat
+	filter := bson.M{"key": crKey}
+	cur, err := chatCollection.Find(ctx, filter)
+	if err != nil {
+		return chats, err
+	}
+	for cur.Next(ctx) {
+		var chat model.Chat
+		err := cur.Decode(&chat)
+		if err != nil {
+			return chats, err
+		}
+		chats = append(chats, &chat)
+	}
+	if err := cur.Err(); err != nil {
+		return chats, nil
+	}
+	cur.Close(ctx)
+
+	if len(chats) == 0 {
+		return chats, mongo.ErrNoDocuments
+	}
+
+	return chats, nil
+}
+
+func sendOldChats(crKey string, ws *websocket.Conn) error {
+	chats, err := getChats(crKey)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	for _, chat := range chats {
+		if chat.Key == clients[ws] {
+			err := messageClient(ws, *chat)
+			if err != nil {
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+func messageClients(msg model.Chat) error {
+	crKey := msg.Key
+	for client := range clients {
+		if crKey == clients[client] {
+			err := messageClient(client, msg)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func messageClient(ws *websocket.Conn, msg model.Chat) error {
+	err := ws.WriteJSON(msg)
+	if err != nil && unsafeError(err) {
+		log.Println(err)
+		ws.Close()
+		delete(clients, ws)
+		return err
+	}
+	return nil
+}
+
+func HandleMessages() {
+	for {
+		msg := <-broadcaster
+		storeInMongo(chatCollection, msg)
+		messageClients(msg)
+	}
+}
+
+func unsafeError(err error) bool {
+	return !websocket.IsCloseError(err, websocket.CloseGoingAway) && err != io.EOF
 }
