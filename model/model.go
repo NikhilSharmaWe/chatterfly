@@ -23,7 +23,9 @@ type User struct {
 }
 
 type Session struct {
-	Username string `json:"username"`
+	Username     string `json:"username"`
+	ChatRoomName string `json:"chatroomname"`
+	ChatRoomKey  string `json:"chatroomkey"`
 }
 
 // key -> chatroom -> chat

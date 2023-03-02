@@ -182,7 +182,7 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
-		http.Redirect(w, r, fmt.Sprintf("/chatroom/%v", crKey), http.StatusSeeOther)
+		http.Redirect(w, r, fmt.Sprintf("/chatroom/%v/", crKey), http.StatusSeeOther)
 		return
 	}
 	http.ServeFile(w, r, "./public/chat/index.html")
@@ -195,17 +195,11 @@ func ChatRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	params := mux.Vars(r)
 	crKey := params["crKey"]
-	chatRoom, err := getChatRoom(w, crKey)
-	if err != nil {
-		log.Println(err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	fmt.Fprintf(w, "ChatRoomName: %v\nChatRoomKey: %v", chatRoom.ChatRoomName, chatRoom.Key)
+	http.StripPrefix("/chatroom/"+crKey, http.FileServer(http.Dir("./public/chatroom"))).ServeHTTP(w, r)
 }
 
 func HandleConnections(w http.ResponseWriter, r *http.Request) {
-	if alreadyLoggedIn(w, r) {
+	if !alreadyLoggedIn(w, r) {
 		http.Redirect(w, r, "/chatroom", http.StatusSeeOther)
 		return
 	}
