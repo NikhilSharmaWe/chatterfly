@@ -27,7 +27,7 @@ var (
 	chatroomCollection *mongo.Collection
 	chatCollection     *mongo.Collection
 	ctx                = context.Background()
-	clients            = make(map[*websocket.Conn]string) //stores client with the chatRoomKey
+	clients            = make(map[*websocket.Conn]model.ClientInfo) //stores client with the chatRoomKey
 	broadcaster        = make(chan model.Chat)
 	upgrader           = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
@@ -64,7 +64,9 @@ func Signup(w http.ResponseWriter, r *http.Request) {
 
 		sId := "session-" + uuid.NewV4().String()
 		session := model.Session{
-			Username: un,
+			Username:  un,
+			Firstname: fn,
+			Lastname:  ln,
 		}
 		err := storeInRedis(sId, w, session)
 		if err != nil {
@@ -124,7 +126,9 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		}
 		sId := "session-" + uuid.NewV4().String()
 		session := model.Session{
-			Username: un,
+			Username:  un,
+			Firstname: user.Firstname,
+			Lastname:  user.Lastname,
 		}
 		err = storeInRedis(sId, w, session)
 		if err != nil {
@@ -193,18 +197,42 @@ func ChatRoom(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
+	var session model.Session
+	cookie, _ := r.Cookie("chatterfly-cookie")
+	sId := cookie.Value
+	err := getSession(sId, &session)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 	params := mux.Vars(r)
 	crKey := params["crKey"]
+	session.ChatRoomKey = crKey
+	// update the session with the chatroomkey
+	err = storeInRedis(sId, w, session)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 	http.StripPrefix("/chatroom/"+crKey, http.FileServer(http.Dir("./public/chatroom"))).ServeHTTP(w, r)
 }
 
 func HandleConnections(w http.ResponseWriter, r *http.Request) {
 	if !alreadyLoggedIn(w, r) {
-		http.Redirect(w, r, "/chatroom", http.StatusSeeOther)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	params := mux.Vars(r)
-	crKey := params["crKey"]
+	var session model.Session
+	cookie, _ := r.Cookie("chatterfly-cookie")
+	sId := cookie.Value
+
+	getSession(sId, &session)
+	un := session.Username
+	fn := session.Firstname
+	crKey := session.ChatRoomKey
+
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println(err)
@@ -213,7 +241,11 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defer ws.Close()
-	clients[ws] = crKey
+	clients[ws] = model.ClientInfo{
+		Key:       crKey,
+		Username:  un,
+		Firstname: fn,
+	}
 
 	chat := model.Chat{}
 	filter := bson.M{"key": crKey}
@@ -230,6 +262,8 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) {
 	for {
 		var msg model.Chat
 		err := ws.ReadJSON(&msg)
+		msg.Username = clients[ws].Username
+		msg.Firstname = clients[ws].Firstname
 		if err != nil {
 			delete(clients, ws)
 			break
@@ -259,7 +293,6 @@ func alreadyLoggedIn(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// functions dealing with redis operations
 func storeInRedis(key string, w http.ResponseWriter, value interface{}) error {
 	json, err := json.Marshal(value)
 	if err != nil {
@@ -281,20 +314,19 @@ func deleteInRedis(key string, w http.ResponseWriter) {
 	}
 }
 
-func getInRedis(key string, obj interface{}) error {
+func getSession(key string, obj *model.Session) error {
 	jsonObj, err := rdb.Get(key).Result()
 	if err != nil {
 		return err
 	}
+	err = json.Unmarshal([]byte(jsonObj), &obj)
 
-	err = json.Unmarshal([]byte(jsonObj), obj)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-// function dealing with mongo operations
 func storeInMongo(collection *mongo.Collection, value interface{}) error {
 	_, err := collection.InsertOne(ctx, value)
 	if err != nil {
@@ -356,7 +388,7 @@ func sendOldChats(crKey string, ws *websocket.Conn) error {
 	}
 
 	for _, chat := range chats {
-		if chat.Key == clients[ws] {
+		if chat.Key == clients[ws].Key {
 			err := messageClient(ws, *chat)
 			if err != nil {
 				return nil
@@ -369,7 +401,7 @@ func sendOldChats(crKey string, ws *websocket.Conn) error {
 func messageClients(msg model.Chat) error {
 	crKey := msg.Key
 	for client := range clients {
-		if crKey == clients[client] {
+		if crKey == clients[client].Key {
 			err := messageClient(client, msg)
 			if err != nil {
 				return err

@@ -23,10 +23,11 @@ type User struct {
 }
 
 type Session struct {
-	Username string `json:"username"`
+	Username    string `json:"username"`
+	Firstname   string `json:"firstname"`
+	Lastname    string `json:"lastname"`
+	ChatRoomKey string `json:"key"`
 }
-
-// key -> chatroom -> chat
 
 type ChatRoom struct {
 	ID           primitive.ObjectID `bson:"_id,omitempty"`
@@ -38,9 +39,17 @@ type ChatRoom struct {
 type Chat struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty"`
 	CreatedAt time.Time          `bson:"created_at"`
+	Username  string             `bson:"username"`
+	Firstname string             `bson:"firstname"`
 	Key       string             `bson:"key"`
-	ChatRoom  string             `json:"chat"`
-	Message   string             `json:"message"`
+	ChatRoom  string             `bson:"chat"`
+	Message   string             `bson:"message"`
+}
+
+type ClientInfo struct {
+	Key       string
+	Username  string
+	Firstname string
 }
 
 func OpenRedis() *redis.Client {
