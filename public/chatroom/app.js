@@ -5,16 +5,14 @@ window.addEventListener("DOMContentLoaded", (_) => {
   crKey = path.replace("/chatroom/",'').replace("/",'');
 
   websocket.addEventListener("message", function (e) {
-    console.log("HELLO")
     let data = JSON.parse(e.data);
-    console.log(data);
     let p = document.createElement("p")
     p.innerHTML = `<p><strong>${data.Firstname}: </strong>${data.Message}</p>`;
     room.append(p);
-    room.scrollTop = room.scrollHeight; // Auto scroll to the bottom
-   });
+    room.scrollTop = room.scrollHeight;
+  });
 
-   document.getElementById("input-form").addEventListener("submit", function (event) {
+  document.getElementById("input-form").addEventListener("submit", function (event) {
     event.preventDefault();
     let text = document.getElementById("input-text");
     websocket.send(

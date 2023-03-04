@@ -42,7 +42,6 @@ type Chat struct {
 	Username  string             `bson:"username"`
 	Firstname string             `bson:"firstname"`
 	Key       string             `bson:"key"`
-	ChatRoom  string             `bson:"chat"`
 	Message   string             `bson:"message"`
 }
 
