@@ -27,7 +27,7 @@ var (
 	chatroomCollection *mongo.Collection
 	chatCollection     *mongo.Collection
 	ctx                = context.Background()
-	clients            = make(map[*websocket.Conn]model.ClientInfo) //stores client with the chatRoomKey
+	clients            = make(map[*websocket.Conn]model.ClientInfo)
 	broadcaster        = make(chan model.Chat)
 	upgrader           = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
@@ -89,7 +89,6 @@ func Signup(w http.ResponseWriter, r *http.Request) {
 			Firstname: fn,
 			Lastname:  ln,
 		}
-		// store(un, w, user)
 		err = storeInMongo(userCollection, &user)
 		if err != nil {
 			log.Println(err)
