@@ -1,0 +1,32 @@
+services: 
+  web: 
+    image: chatter 
+    networks:
+      clusternetwork:
+        ipv4_address: 172.16.0.12
+    ports: 
+      - "4444:4444" 
+    depends_on: 
+      - mongodb 
+      - redisdb 
+  mongodb: 
+    image: mongo
+    ports: 
+      - "27017:27017" 
+    networks:
+      clusternetwork:
+        ipv4_address: 172.16.0.13
+  redisdb: 
+    image: redis
+    ports: 
+      - "6379:6379"
+    networks:
+      clusternetwork:
+        ipv4_address: 172.16.0.14
+networks:
+  clusternetwork:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.16.0.0/24

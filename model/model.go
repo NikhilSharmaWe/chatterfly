@@ -68,7 +68,13 @@ func OpenRedis() *redis.Client {
 }
 
 func CreateMongoCollection(ctx context.Context, name string) *mongo.Collection {
-	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017/")
+	err := godotenv.Load("vars.env")
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
+	url := os.Getenv("MONGO_URL")
+	clientOptions := options.Client().ApplyURI(url)
 	client, err := mongo.Connect(ctx, clientOptions)
 	if err != nil {
 		log.Fatal(err)
