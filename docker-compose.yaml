@@ -1,6 +1,6 @@
 services: 
   web: 
-    image: chatter 
+    image: nikhilsharmawe/chatterfly
     networks:
       clusternetwork:
         ipv4_address: 172.16.0.12
