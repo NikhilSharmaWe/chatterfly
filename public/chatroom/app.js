@@ -6,10 +6,15 @@ window.addEventListener("DOMContentLoaded", (_) => {
 
   websocket.addEventListener("message", function (e) {
     let data = JSON.parse(e.data);
-    let p = document.createElement("p")
-    p.innerHTML = `<p><strong>${data.Firstname}: </strong>${data.Message}</p>`;
-    room.append(p);
-    room.scrollTop = room.scrollHeight;
+    if ("ChatRoomName" in data) {
+      let chatroom = document.getElementById("chatroom");
+      chatroom.innerHTML = data.ChatRoomName
+    } else {
+      let p = document.createElement("p")
+      p.innerHTML = `<p><strong>${data.Firstname}: </strong>${data.Message}</p>`;
+      room.append(p);
+      room.scrollTop = room.scrollHeight;
+    }
   });
 
   document.getElementById("input-form").addEventListener("submit", function (event) {

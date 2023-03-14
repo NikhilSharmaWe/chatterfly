@@ -257,7 +257,8 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-
+	cr, err := getChatRoom(w, crKey)
+	messageClient(ws, cr)
 	for {
 		var msg model.Chat
 		err := ws.ReadJSON(&msg)
@@ -410,7 +411,7 @@ func messageClients(msg model.Chat) error {
 	return nil
 }
 
-func messageClient(ws *websocket.Conn, msg model.Chat) error {
+func messageClient(ws *websocket.Conn, msg interface{}) error {
 	err := ws.WriteJSON(msg)
 	if err != nil && unsafeError(err) {
 		log.Println(err)
