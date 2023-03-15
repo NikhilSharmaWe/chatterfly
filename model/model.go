@@ -20,6 +20,7 @@ type User struct {
 	Firstname string             `bson:"firstname"`
 	Lastname  string             `bson:"lastname"`
 	Password  []byte             `bson:"password"`
+	Chatrooms []ChatRoom         `bson:"chatrooms"`
 }
 
 type Session struct {

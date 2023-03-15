@@ -12,8 +12,10 @@ var RegisterRoutes = func(r *mux.Router) {
 	r.Handle("/favicon.ico", http.NotFoundHandler())
 	r.HandleFunc("/login", controller.Login)
 	r.HandleFunc("/signup", controller.Signup)
-	r.HandleFunc("/chatroom", controller.Chat)
 	r.PathPrefix("/chatroom/{crKey}/").HandlerFunc(controller.ChatRoom)
+	r.PathPrefix("/chatroom/").HandlerFunc(controller.Chat)
 	r.HandleFunc("/logout", controller.Logout)
 	r.HandleFunc("/websocket", controller.HandleConnections)
+	r.HandleFunc("/linkdata", controller.SendUserData)
+
 }

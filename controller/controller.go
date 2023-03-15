@@ -45,7 +45,7 @@ func init() {
 
 func Signup(w http.ResponseWriter, r *http.Request) {
 	if alreadyLoggedIn(w, r) {
-		http.Redirect(w, r, "/chatroom", http.StatusSeeOther)
+		http.Redirect(w, r, "/chatroom/", http.StatusSeeOther)
 		return
 	}
 
@@ -100,7 +100,7 @@ func Signup(w http.ResponseWriter, r *http.Request) {
 			Name:  "chatterfly-cookie",
 			Value: sId,
 		})
-		http.Redirect(w, r, "/chatroom", http.StatusSeeOther)
+		http.Redirect(w, r, "/chatroom/", http.StatusSeeOther)
 		return
 	}
 	http.ServeFile(w, r, "./public/signup/index.html")
@@ -108,7 +108,7 @@ func Signup(w http.ResponseWriter, r *http.Request) {
 
 func Login(w http.ResponseWriter, r *http.Request) {
 	if alreadyLoggedIn(w, r) {
-		http.Redirect(w, r, "/chatroom", http.StatusSeeOther)
+		http.Redirect(w, r, "/chatroom/", http.StatusSeeOther)
 		return
 	}
 
@@ -141,7 +141,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 			Value: sId,
 		})
 
-		http.Redirect(w, r, "/chatroom", http.StatusSeeOther)
+		http.Redirect(w, r, "/chatroom/", http.StatusSeeOther)
 		return
 	}
 	http.ServeFile(w, r, "./public/login/index.html")
@@ -185,10 +185,20 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
+		var session model.Session
+		cookie, _ := r.Cookie("chatterfly-cookie")
+		sId := cookie.Value
+
+		getSession(sId, &session)
+		un := session.Username
+		user := getUser(w, un)
+		crs := append(user.Chatrooms, cr)
+		updateCRListForUser(user.Username, crs)
+
 		http.Redirect(w, r, fmt.Sprintf("/chatroom/%v/", crKey), http.StatusSeeOther)
 		return
 	}
-	http.ServeFile(w, r, "./public/chat/index.html")
+	http.StripPrefix("/chatroom", http.FileServer(http.Dir("./public/chat"))).ServeHTTP(w, r)
 }
 
 func ChatRoom(w http.ResponseWriter, r *http.Request) {
@@ -258,6 +268,11 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cr, err := getChatRoom(w, crKey)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 	messageClient(ws, cr)
 	for {
 		var msg model.Chat
@@ -269,6 +284,23 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		broadcaster <- msg
+	}
+}
+
+func SendUserData(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var session model.Session
+	cookie, _ := r.Cookie("chatterfly-cookie")
+	sId := cookie.Value
+
+	getSession(sId, &session)
+	un := session.Username
+	user := getUser(w, un)
+	err := json.NewEncoder(w).Encode(user)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
 	}
 }
 
@@ -378,6 +410,16 @@ func getChats(crKey string) ([]*model.Chat, error) {
 	}
 
 	return chats, nil
+}
+
+func updateCRListForUser(un string, updatedList []model.ChatRoom) error {
+	filter := bson.D{primitive.E{Key: "username", Value: un}}
+	update := bson.D{primitive.E{Key: "$set", Value: bson.D{
+		primitive.E{Key: "chatrooms", Value: updatedList},
+	}}}
+
+	u := model.User{}
+	return userCollection.FindOneAndUpdate(ctx, filter, update).Decode(&u)
 }
 
 func sendOldChats(crKey string, ws *websocket.Conn) error {
