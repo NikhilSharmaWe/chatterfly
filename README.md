@@ -15,3 +15,4 @@ Chatterfly is a chat application built using Golang and websockets.
 
 ### Running locally
 - Run `docker compose up` for the following docker compose file in the repo: [docker-compose.yaml](https://github.com/NikhilSharmaWe/chatterfly/blob/main/docker-compose.yaml)
+
