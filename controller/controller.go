@@ -242,6 +242,19 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) {
 	fn := session.Firstname
 	crKey := session.ChatRoomKey
 
+	chat := model.Chat{}
+	filter := bson.M{"key": crKey}
+	cr, err := getChatRoom(w, crKey)
+	if err != nil { // do this before sending old chats to check whether the chatroom for the link exists or not
+		log.Println(err)
+		if err == mongo.ErrNoDocuments {
+			http.Error(w, "Chatroom does not exists", http.StatusInternalServerError)
+		} else {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println(err)
@@ -256,8 +269,6 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) {
 		Firstname: fn,
 	}
 
-	chat := model.Chat{}
-	filter := bson.M{"key": crKey}
 	err = chatCollection.FindOne(context.Background(), filter).Decode(&chat)
 	if err == nil {
 		err := sendOldChats(crKey, ws)
@@ -267,13 +278,22 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	cr, err := getChatRoom(w, crKey)
-	if err != nil {
-		log.Println(err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
+
+	messageClient(ws, cr) // this is sending chatroom for displaying the chatroomname on top of chatroom
+
+	user := getUser(w, un)
+	var userAlreadyMember bool
+	for _, chatRoom := range user.Chatrooms {
+		if chatRoom.Key == crKey {
+			userAlreadyMember = true
+			break
+		}
 	}
-	messageClient(ws, cr)
+	if !userAlreadyMember {
+		crs := append(user.Chatrooms, cr)
+		updateCRListForUser(user.Username, crs)
+	}
+
 	for {
 		var msg model.Chat
 		err := ws.ReadJSON(&msg)
