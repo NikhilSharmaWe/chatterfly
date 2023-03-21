@@ -219,10 +219,11 @@ func ChatRoom(w http.ResponseWriter, r *http.Request) {
 	crKey := params["crKey"]
 	_, err = getChatRoom(w, crKey)
 	if err != nil {
-		log.Println(err)
 		if err == mongo.ErrNoDocuments {
+			log.Println("Chatroom does not exists")
 			http.Error(w, "Chatroom does not exists", http.StatusInternalServerError)
 		} else {
+			log.Println(err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 		return
