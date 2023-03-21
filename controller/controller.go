@@ -217,6 +217,17 @@ func ChatRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	params := mux.Vars(r)
 	crKey := params["crKey"]
+	_, err = getChatRoom(w, crKey)
+	if err != nil {
+		log.Println(err)
+		if err == mongo.ErrNoDocuments {
+			http.Error(w, "Chatroom does not exists", http.StatusInternalServerError)
+		} else {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+
 	session.ChatRoomKey = crKey
 	// update the session with the chatroomkey
 	err = storeInRedis(sId, w, session)
@@ -226,6 +237,11 @@ func ChatRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.StripPrefix("/chatroom/"+crKey, http.FileServer(http.Dir("./public/chatroom"))).ServeHTTP(w, r)
+}
+
+func PathWithoutFS(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	http.Redirect(w, r, path+"/", http.StatusSeeOther)
 }
 
 func HandleConnections(w http.ResponseWriter, r *http.Request) {
@@ -244,17 +260,7 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) {
 
 	chat := model.Chat{}
 	filter := bson.M{"key": crKey}
-	cr, err := getChatRoom(w, crKey)
-	if err != nil { // do this before sending old chats to check whether the chatroom for the link exists or not
-		log.Println(err)
-		if err == mongo.ErrNoDocuments {
-			http.Error(w, "Chatroom does not exists", http.StatusInternalServerError)
-		} else {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-		}
-		return
-	}
-
+	cr, _ := getChatRoom(w, crKey)
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println(err)
