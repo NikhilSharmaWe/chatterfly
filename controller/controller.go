@@ -44,8 +44,13 @@ func init() {
 }
 
 func Signup(w http.ResponseWriter, r *http.Request) {
-	if alreadyLoggedIn(w, r) {
+	loggedIn, err := alreadyLoggedIn(w, r)
+	if loggedIn {
 		http.Redirect(w, r, "/chatroom/", http.StatusSeeOther)
+		return
+	}
+
+	if err != nil {
 		return
 	}
 
@@ -107,8 +112,13 @@ func Signup(w http.ResponseWriter, r *http.Request) {
 }
 
 func Login(w http.ResponseWriter, r *http.Request) {
-	if alreadyLoggedIn(w, r) {
+	loggedIn, err := alreadyLoggedIn(w, r)
+	if loggedIn {
 		http.Redirect(w, r, "/chatroom/", http.StatusSeeOther)
+		return
+	}
+
+	if err != nil {
 		return
 	}
 
@@ -148,7 +158,8 @@ func Login(w http.ResponseWriter, r *http.Request) {
 }
 
 func Logout(w http.ResponseWriter, r *http.Request) {
-	if !alreadyLoggedIn(w, r) {
+	loggedIn, _ := alreadyLoggedIn(w, r)
+	if !loggedIn {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
@@ -167,8 +178,9 @@ func Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func Chat(w http.ResponseWriter, r *http.Request) {
-	if !alreadyLoggedIn(w, r) {
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+	loggedIn, _ := alreadyLoggedIn(w, r)
+	if !loggedIn {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 
@@ -202,8 +214,9 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 }
 
 func ChatRoom(w http.ResponseWriter, r *http.Request) {
-	if !alreadyLoggedIn(w, r) {
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+	loggedIn, _ := alreadyLoggedIn(w, r)
+	if !loggedIn {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 	var session model.Session
@@ -246,7 +259,8 @@ func PathWithoutFS(w http.ResponseWriter, r *http.Request) {
 }
 
 func HandleConnections(w http.ResponseWriter, r *http.Request) {
-	if !alreadyLoggedIn(w, r) {
+	loggedIn, _ := alreadyLoggedIn(w, r)
+	if !loggedIn {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
@@ -331,10 +345,10 @@ func SendUserData(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func alreadyLoggedIn(w http.ResponseWriter, r *http.Request) bool {
+func alreadyLoggedIn(w http.ResponseWriter, r *http.Request) (bool, error) {
 	cookie, err := r.Cookie("chatterfly-cookie")
 	if err == http.ErrNoCookie {
-		return false
+		return false, nil
 	}
 
 	sId := cookie.Value
@@ -347,9 +361,9 @@ func alreadyLoggedIn(w http.ResponseWriter, r *http.Request) bool {
 			log.Println(err)
 			http.Error(w, "Unable to get the session info", http.StatusInternalServerError)
 		}
-		return false
+		return false, err
 	}
-	return true
+	return true, nil
 }
 
 func storeInRedis(key string, w http.ResponseWriter, value interface{}) error {
