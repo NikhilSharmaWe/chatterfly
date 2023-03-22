@@ -180,7 +180,7 @@ func Logout(w http.ResponseWriter, r *http.Request) {
 func Chat(w http.ResponseWriter, r *http.Request) {
 	loggedIn, _ := alreadyLoggedIn(w, r)
 	if !loggedIn {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
 
@@ -216,7 +216,7 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 func ChatRoom(w http.ResponseWriter, r *http.Request) {
 	loggedIn, _ := alreadyLoggedIn(w, r)
 	if !loggedIn {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
 	var session model.Session
