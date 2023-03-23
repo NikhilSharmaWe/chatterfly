@@ -4,7 +4,7 @@ fetch(endpoint)
   .then(response => response.json())
   .then(data => {
     console.log(data.Chatrooms); 
-    let crs = data.Chatrooms
+    let crs = data.Chatrooms || []
     const paragraph = document.getElementById('chatrooms');
 
     const listItems = crs.map(item => `<li><a href="${window.location.origin}/chatroom/${item.Key}/">${item.ChatRoomName}</li>`);
