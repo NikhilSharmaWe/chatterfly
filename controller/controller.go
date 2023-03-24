@@ -207,7 +207,7 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 		crs := append(user.Chatrooms, cr)
 		updateCRListForUser(user.Username, crs)
 
-		http.Redirect(w, r, fmt.Sprintf("/chatroom/%v/", crKey), http.StatusSeeOther)
+		http.Redirect(w, r, fmt.Sprintf("/chatroom/c/%v/", crKey), http.StatusSeeOther)
 		return
 	}
 	http.StripPrefix("/chatroom", http.FileServer(http.Dir("./public/chat"))).ServeHTTP(w, r)
@@ -250,7 +250,7 @@ func ChatRoom(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
-	http.StripPrefix("/chatroom/"+crKey, http.FileServer(http.Dir("./public/chatroom"))).ServeHTTP(w, r)
+	http.StripPrefix("/chatroom/c/"+crKey, http.FileServer(http.Dir("./public/chatroom"))).ServeHTTP(w, r)
 }
 
 func PathWithoutFS(w http.ResponseWriter, r *http.Request) {

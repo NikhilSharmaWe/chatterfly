@@ -7,7 +7,7 @@ fetch(endpoint)
     let crs = data.Chatrooms || [];
     const paragraph = document.getElementById('chatrooms');
 
-    const listItems = crs.map(item => `<li><a href="${window.location.origin}/chatroom/${item.Key}/">${item.ChatRoomName}</li>`);
+    const listItems = crs.map(item => `<li><a href="${window.location.origin}/chatroom/c/${item.Key}/">${item.ChatRoomName}</li>`);
 
     const listHTML = listItems.join('');
 

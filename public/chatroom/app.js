@@ -2,7 +2,7 @@ window.addEventListener("DOMContentLoaded", (_) => {
   let websocket = new WebSocket("ws://" + window.location.host + "/websocket");
   let room = document.getElementById("chat-text");
   path = window.location.pathname;
-  crKey = path.replace("/chatroom/",'').replace("/",'');
+  crKey = path.replace("/chatroom/c/",'').replace("/",'');
 
   websocket.addEventListener("message", function (e) {
     let data = JSON.parse(e.data);
