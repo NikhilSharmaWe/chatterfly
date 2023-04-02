@@ -20,7 +20,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-type ApiFunc func(w http.ResponseWriter, r *http.Request) error
+type apiFunc func(w http.ResponseWriter, r *http.Request) error
 
 type apiError struct {
 	Error string `json:"error"`
@@ -497,12 +497,18 @@ func messageClient(ws *websocket.Conn, msg interface{}) error {
 func HandleMessages() {
 	for {
 		msg := <-broadcaster
-		storeInMongo(chatCollection, msg)
-		messageClients(msg)
+		err := storeInMongo(chatCollection, msg)
+		if err != nil {
+			log.Println(err)
+		}
+		err = messageClients(msg)
+		if err != nil {
+			log.Println(err)
+		}
 	}
 }
 
-func MakeHTTPHandlerFunc(fn ApiFunc) http.HandlerFunc {
+func MakeHTTPHandlerFunc(fn apiFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		err := fn(w, r)
 		if err != nil {
