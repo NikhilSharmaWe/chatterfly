@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -20,6 +19,12 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"golang.org/x/crypto/bcrypt"
 )
+
+type ApiFunc func(w http.ResponseWriter, r *http.Request) error
+
+type apiError struct {
+	Error string `json:"error"`
+}
 
 var (
 	rdb                *redis.Client
@@ -43,83 +48,60 @@ func init() {
 	chatCollection = model.CreateMongoCollection(ctx, "chat")
 }
 
-func Signup(w http.ResponseWriter, r *http.Request) {
+func HandleSignup(w http.ResponseWriter, r *http.Request) error {
 	loggedIn, err := alreadyLoggedIn(w, r)
 	if loggedIn {
 		http.Redirect(w, r, "/chatroom/", http.StatusSeeOther)
-		return
+		return nil
 	}
 
 	if err != nil {
-		return
+		return internalServerError(w, err)
 	}
 
 	if r.Method == http.MethodPost {
-		un := r.PostFormValue("username")
-		pw := r.PostFormValue("password")
-		fn := r.PostFormValue("firstname")
-		ln := r.PostFormValue("lastname")
-
-		du := getUser(w, un)
-		if du.Username == un {
-			log.Println("Username already present")
-			http.Error(w, "Username already present", http.StatusForbidden)
-			return
-		}
-
-		sId := "session-" + uuid.NewV4().String()
-		session := model.Session{
-			Username:  un,
-			Firstname: fn,
-			Lastname:  ln,
-		}
-		err := storeInRedis(sId, w, session)
+		user := new(model.User)
+		err := createUserFromForm(w, r, user)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
+			return internalServerError(w, err)
 		}
 
-		bs, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.MinCost)
-		if err != nil {
-			log.Println(err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
+		du := getUser(w, user.Username)
+		if du.Username == user.Username {
+			return permissionDenied(w, fmt.Sprintf("username %s already exists", user.Username))
 		}
-		user := model.User{
-			ID:        primitive.NewObjectID(),
-			CreatedAt: time.Now(),
-			Username:  un,
-			Password:  bs,
-			Firstname: fn,
-			Lastname:  ln,
-		}
+
 		err = storeInMongo(userCollection, &user)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
+			return internalServerError(w, err)
 		}
 
-		http.SetCookie(w, &http.Cookie{
-			Name:  "chatterfly-cookie",
-			Value: sId,
-		})
+		sID := "session-" + uuid.NewV4().String()
+		session := new(model.Session)
+		createSessionFromUser(user, session)
+		err = storeInRedis(sID, w, session)
+		if err != nil {
+			return internalServerError(w, err)
+		}
+
+		createCookie(w, sID)
 		http.Redirect(w, r, "/chatroom/", http.StatusSeeOther)
-		return
+		return nil
 	}
+
 	http.ServeFile(w, r, "./public/signup/index.html")
+	return nil
 }
 
-func Login(w http.ResponseWriter, r *http.Request) {
+func HandleLogin(w http.ResponseWriter, r *http.Request) error {
 	loggedIn, err := alreadyLoggedIn(w, r)
 	if loggedIn {
 		http.Redirect(w, r, "/chatroom/", http.StatusSeeOther)
-		return
+		return nil
 	}
 
 	if err != nil {
-		return
+		return internalServerError(w, err)
 	}
 
 	if r.Method == http.MethodPost {
@@ -129,44 +111,39 @@ func Login(w http.ResponseWriter, r *http.Request) {
 
 		err := bcrypt.CompareHashAndPassword(user.Password, []byte(pw))
 		if err != nil {
-			log.Println("Username and/or password do not match")
-			http.Error(w, "Username and/or password do not match", http.StatusForbidden)
-			return
+			return permissionDenied(w, "username and password do not match")
 		}
-		sId := "session-" + uuid.NewV4().String()
-		session := model.Session{
-			Username:  un,
-			Firstname: user.Firstname,
-			Lastname:  user.Lastname,
-		}
-		err = storeInRedis(sId, w, session)
+
+		sID := "session-" + uuid.NewV4().String()
+		session := new(model.Session)
+		createSessionFromUser(&user, session)
+		err = storeInRedis(sID, w, session)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
+			return internalServerError(w, err)
 		}
 
-		http.SetCookie(w, &http.Cookie{
-			Name:  "chatterfly-cookie",
-			Value: sId,
-		})
-
+		createCookie(w, sID)
 		http.Redirect(w, r, "/chatroom/", http.StatusSeeOther)
-		return
+		return nil
 	}
+
 	http.ServeFile(w, r, "./public/login/index.html")
+	return nil
 }
 
-func Logout(w http.ResponseWriter, r *http.Request) {
+func HandleLogout(w http.ResponseWriter, r *http.Request) error {
 	loggedIn, _ := alreadyLoggedIn(w, r)
 	if !loggedIn {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
+		return nil
 	}
 
 	cookie, _ := r.Cookie("chatterfly-cookie")
 	sId := cookie.Value
-	deleteInRedis(sId, w)
+	err := deleteInRedis(sId, w)
+	if err != nil {
+		return internalServerError(w, err)
+	}
 	cookie = &http.Cookie{
 		Name:   "chatterfly-cookie",
 		Value:  "",
@@ -175,13 +152,14 @@ func Logout(w http.ResponseWriter, r *http.Request) {
 
 	http.SetCookie(w, cookie)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+	return nil
 }
 
-func Chat(w http.ResponseWriter, r *http.Request) {
+func HandleCreateChatroom(w http.ResponseWriter, r *http.Request) error {
 	loggedIn, _ := alreadyLoggedIn(w, r)
 	if !loggedIn {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
-		return
+		return nil
 	}
 
 	if r.Method == http.MethodPost {
@@ -191,66 +169,65 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 			ChatRoomName: name,
 			Key:          crKey,
 		}
+
 		err := storeInMongo(chatroomCollection, &cr)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
+			return internalServerError(w, err)
 		}
+
 		var session model.Session
 		cookie, _ := r.Cookie("chatterfly-cookie")
 		sId := cookie.Value
-
 		getSession(sId, &session)
+
 		un := session.Username
 		user := getUser(w, un)
 		crs := append(user.Chatrooms, cr)
-		updateCRListForUser(user.Username, crs)
 
+		updateCRListForUser(user.Username, crs)
 		http.Redirect(w, r, fmt.Sprintf("/chatroom/c/%v/", crKey), http.StatusSeeOther)
-		return
+		return nil
 	}
-	http.StripPrefix("/chatroom", http.FileServer(http.Dir("./public/chat"))).ServeHTTP(w, r)
+
+	http.StripPrefix("/chatroom", http.FileServer(http.Dir("./public/createChatroom"))).ServeHTTP(w, r)
+	return nil
 }
 
-func ChatRoom(w http.ResponseWriter, r *http.Request) {
+func HandleChatroom(w http.ResponseWriter, r *http.Request) error {
 	loggedIn, _ := alreadyLoggedIn(w, r)
 	if !loggedIn {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
-		return
+		return nil
 	}
 	var session model.Session
 	cookie, _ := r.Cookie("chatterfly-cookie")
 	sId := cookie.Value
+
 	err := getSession(sId, &session)
 	if err != nil {
-		log.Println(err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
+		return internalServerError(w, err)
 	}
+
 	params := mux.Vars(r)
 	crKey := params["crKey"]
 	_, err = getChatRoom(w, crKey)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			log.Println("Chatroom does not exists")
-			http.Error(w, "Chatroom does not exists", http.StatusInternalServerError)
+			return fmt.Errorf("chatroom does not exists")
 		} else {
-			log.Println(err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return internalServerError(w, err)
 		}
-		return
 	}
 
 	session.ChatRoomKey = crKey
 	// update the session with the chatroomkey
 	err = storeInRedis(sId, w, session)
 	if err != nil {
-		log.Println(err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
+		return internalServerError(w, err)
 	}
+
 	http.StripPrefix("/chatroom/c/"+crKey, http.FileServer(http.Dir("./public/chatroom"))).ServeHTTP(w, r)
+	return nil
 }
 
 func PathWithoutFS(w http.ResponseWriter, r *http.Request) {
@@ -258,12 +235,13 @@ func PathWithoutFS(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, path+"/", http.StatusSeeOther)
 }
 
-func HandleConnections(w http.ResponseWriter, r *http.Request) {
+func HandleConnections(w http.ResponseWriter, r *http.Request) error {
 	loggedIn, _ := alreadyLoggedIn(w, r)
 	if !loggedIn {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
+		return nil
 	}
+
 	var session model.Session
 	cookie, _ := r.Cookie("chatterfly-cookie")
 	sId := cookie.Value
@@ -278,9 +256,7 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) {
 	cr, _ := getChatRoom(w, crKey)
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println(err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
+		return internalServerError(w, err)
 	}
 
 	defer ws.Close()
@@ -294,9 +270,7 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err := sendOldChats(crKey, ws)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
+			return internalServerError(w, err)
 		}
 	}
 
@@ -326,9 +300,11 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) {
 		}
 		broadcaster <- msg
 	}
+
+	return nil
 }
 
-func SendUserData(w http.ResponseWriter, r *http.Request) {
+func SendUserData(w http.ResponseWriter, r *http.Request) error {
 	w.Header().Set("Content-Type", "application/json")
 	var session model.Session
 	cookie, _ := r.Cookie("chatterfly-cookie")
@@ -337,12 +313,13 @@ func SendUserData(w http.ResponseWriter, r *http.Request) {
 	getSession(sId, &session)
 	un := session.Username
 	user := getUser(w, un)
+
 	err := json.NewEncoder(w).Encode(user)
 	if err != nil {
-		log.Println(err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
+		return internalServerError(w, err)
 	}
+
+	return nil
 }
 
 func alreadyLoggedIn(w http.ResponseWriter, r *http.Request) (bool, error) {
@@ -352,39 +329,35 @@ func alreadyLoggedIn(w http.ResponseWriter, r *http.Request) (bool, error) {
 	}
 
 	sId := cookie.Value
+
 	_, err = rdb.Get(sId).Result()
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			log.Println(err)
-			http.Error(w, "Entity not found", http.StatusInternalServerError)
-		} else {
-			log.Println(err)
-			http.Error(w, "Unable to get the session info", http.StatusInternalServerError)
-		}
 		return false, err
 	}
+
 	return true, nil
 }
 
 func storeInRedis(key string, w http.ResponseWriter, value interface{}) error {
 	json, err := json.Marshal(value)
 	if err != nil {
-		log.Println(err)
 		return err
 	}
+
 	if err = rdb.Set(key, json, 0).Err(); err != nil {
-		log.Println(err)
 		return err
 	}
+
 	return nil
 }
 
-func deleteInRedis(key string, w http.ResponseWriter) {
+func deleteInRedis(key string, w http.ResponseWriter) error {
 	_, err := rdb.Del(key).Result()
 	if err != nil {
-		log.Println(err)
-		http.Error(w, "Unable to delete data", http.StatusInternalServerError)
+		return err
 	}
+
+	return nil
 }
 
 func getSession(key string, obj *model.Session) error {
@@ -392,20 +365,21 @@ func getSession(key string, obj *model.Session) error {
 	if err != nil {
 		return err
 	}
-	err = json.Unmarshal([]byte(jsonObj), &obj)
 
+	err = json.Unmarshal([]byte(jsonObj), &obj)
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
 
 func storeInMongo(collection *mongo.Collection, value interface{}) error {
 	_, err := collection.InsertOne(ctx, value)
 	if err != nil {
-		log.Println(err)
 		return err
 	}
+
 	return nil
 }
 
@@ -413,16 +387,19 @@ func getUser(w http.ResponseWriter, un string) model.User {
 	user := model.User{}
 	filter := bson.M{"username": un}
 	userCollection.FindOne(context.Background(), filter).Decode(&user)
+
 	return user
 }
 
 func getChatRoom(w http.ResponseWriter, key string) (model.ChatRoom, error) {
 	chatRoom := model.ChatRoom{}
 	filter := bson.M{"key": key}
+
 	err := chatroomCollection.FindOne(context.Background(), filter).Decode(&chatRoom)
 	if err != nil {
 		return chatRoom, err
 	}
+
 	return chatRoom, nil
 }
 
@@ -433,6 +410,7 @@ func getChats(crKey string) ([]*model.Chat, error) {
 	if err != nil {
 		return chats, err
 	}
+
 	for cur.Next(ctx) {
 		var chat model.Chat
 		err := cur.Decode(&chat)
@@ -441,11 +419,12 @@ func getChats(crKey string) ([]*model.Chat, error) {
 		}
 		chats = append(chats, &chat)
 	}
+
 	if err := cur.Err(); err != nil {
 		return chats, nil
 	}
-	cur.Close(ctx)
 
+	cur.Close(ctx)
 	if len(chats) == 0 {
 		return chats, mongo.ErrNoDocuments
 	}
@@ -460,6 +439,7 @@ func updateCRListForUser(un string, updatedList []model.ChatRoom) error {
 	}}}
 
 	u := model.User{}
+
 	return userCollection.FindOneAndUpdate(ctx, filter, update).Decode(&u)
 }
 
@@ -478,6 +458,7 @@ func sendOldChats(crKey string, ws *websocket.Conn) error {
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -491,6 +472,7 @@ func messageClients(msg model.Chat) error {
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -502,6 +484,7 @@ func messageClient(ws *websocket.Conn, msg interface{}) error {
 		delete(clients, ws)
 		return err
 	}
+
 	return nil
 }
 
@@ -511,6 +494,68 @@ func HandleMessages() {
 		storeInMongo(chatCollection, msg)
 		messageClients(msg)
 	}
+}
+
+func MakeHTTPHandlerFunc(fn ApiFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		err := fn(w, r)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, apiError{Error: err.Error()})
+		}
+	}
+}
+
+func createUserFromForm(w http.ResponseWriter, r *http.Request, user *model.User) error {
+	bs, err := bcrypt.GenerateFromPassword([]byte(r.PostFormValue("password")), bcrypt.MinCost)
+	if err != nil {
+		return internalServerError(w, err)
+	}
+
+	*user = model.User{
+		ID:        primitive.NewObjectID(),
+		CreatedAt: time.Now(),
+		Username:  r.PostFormValue("username"),
+		Password:  bs,
+		Firstname: r.PostFormValue("firstname"),
+		Lastname:  r.PostFormValue("lastname"),
+	}
+
+	return nil
+}
+
+func createSessionFromUser(user *model.User, session *model.Session) {
+	*session = model.Session{
+		Username:  user.Username,
+		Firstname: user.Firstname,
+		Lastname:  user.Lastname,
+	}
+}
+
+func createCookie(w http.ResponseWriter, sID string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:  "chatterfly-cookie",
+		Value: sID,
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) error {
+	w.Header().Add("Content-Type", "application/json")
+	w.WriteHeader(status)
+
+	err := json.NewEncoder(w).Encode(v)
+	if err != nil {
+		return internalServerError(w, err)
+	}
+	return nil
+}
+
+func permissionDenied(w http.ResponseWriter, errStr string) error {
+	return writeJSON(w, http.StatusForbidden, apiError{Error: errStr})
+}
+
+func internalServerError(w http.ResponseWriter, err error) error {
+	log.Println(err)
+	return writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal server error"})
 }
 
 func unsafeError(err error) bool {
