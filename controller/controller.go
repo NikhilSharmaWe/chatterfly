@@ -60,8 +60,7 @@ func HandleSignup(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	if r.Method == http.MethodPost {
-		user := new(model.User)
-		err := createUserFromForm(w, r, user)
+		user, err := createUserFromForm(w, r)
 		if err != nil {
 			return internalServerError(w, err)
 		}
@@ -77,8 +76,8 @@ func HandleSignup(w http.ResponseWriter, r *http.Request) error {
 		}
 
 		sID := "session-" + uuid.NewV4().String()
-		session := new(model.Session)
-		createSessionFromUser(user, session)
+		session := createSessionFromUser(user)
+
 		err = storeInRedis(sID, w, session)
 		if err != nil {
 			return internalServerError(w, err)
@@ -116,7 +115,8 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) error {
 
 		sID := "session-" + uuid.NewV4().String()
 		session := new(model.Session)
-		createSessionFromUser(&user, session)
+		createSessionFromUser(user)
+
 		err = storeInRedis(sID, w, session)
 		if err != nil {
 			return internalServerError(w, err)
@@ -140,10 +140,12 @@ func HandleLogout(w http.ResponseWriter, r *http.Request) error {
 
 	cookie, _ := r.Cookie("chatterfly-cookie")
 	sId := cookie.Value
+
 	err := deleteInRedis(sId, w)
 	if err != nil {
 		return internalServerError(w, err)
 	}
+
 	cookie = &http.Cookie{
 		Name:   "chatterfly-cookie",
 		Value:  "",
@@ -152,6 +154,7 @@ func HandleLogout(w http.ResponseWriter, r *http.Request) error {
 
 	http.SetCookie(w, cookie)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+
 	return nil
 }
 
@@ -199,6 +202,7 @@ func HandleChatroom(w http.ResponseWriter, r *http.Request) error {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return nil
 	}
+
 	var session model.Session
 	cookie, _ := r.Cookie("chatterfly-cookie")
 	sId := cookie.Value
@@ -210,6 +214,7 @@ func HandleChatroom(w http.ResponseWriter, r *http.Request) error {
 
 	params := mux.Vars(r)
 	crKey := params["crKey"]
+
 	_, err = getChatRoom(w, crKey)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
@@ -254,6 +259,7 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) error {
 	chat := model.Chat{}
 	filter := bson.M{"key": crKey}
 	cr, _ := getChatRoom(w, crKey)
+
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return internalServerError(w, err)
@@ -505,13 +511,14 @@ func MakeHTTPHandlerFunc(fn ApiFunc) http.HandlerFunc {
 	}
 }
 
-func createUserFromForm(w http.ResponseWriter, r *http.Request, user *model.User) error {
+func createUserFromForm(w http.ResponseWriter, r *http.Request) (model.User, error) {
+	user := model.User{}
 	bs, err := bcrypt.GenerateFromPassword([]byte(r.PostFormValue("password")), bcrypt.MinCost)
 	if err != nil {
-		return internalServerError(w, err)
+		return user, internalServerError(w, err)
 	}
 
-	*user = model.User{
+	user = model.User{
 		ID:        primitive.NewObjectID(),
 		CreatedAt: time.Now(),
 		Username:  r.PostFormValue("username"),
@@ -520,15 +527,17 @@ func createUserFromForm(w http.ResponseWriter, r *http.Request, user *model.User
 		Lastname:  r.PostFormValue("lastname"),
 	}
 
-	return nil
+	return user, nil
 }
 
-func createSessionFromUser(user *model.User, session *model.Session) {
-	*session = model.Session{
+func createSessionFromUser(user model.User) model.Session {
+	session := model.Session{
 		Username:  user.Username,
 		Firstname: user.Firstname,
 		Lastname:  user.Lastname,
 	}
+
+	return session
 }
 
 func createCookie(w http.ResponseWriter, sID string) {
