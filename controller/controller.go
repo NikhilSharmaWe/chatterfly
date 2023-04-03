@@ -215,12 +215,32 @@ func HandleChatroom(w http.ResponseWriter, r *http.Request) error {
 	params := mux.Vars(r)
 	crKey := params["crKey"]
 
-	_, err = getChatRoom(w, crKey)
+	cr, err := getChatRoom(w, crKey)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			return fmt.Errorf("chatroom does not exists")
 		} else {
 			return internalServerError(w, err)
+		}
+	}
+
+	if r.Method == http.MethodPost {
+		un := r.PostFormValue("invite-user")
+		user := getUser(w, un)
+		if user.Username != un {
+			return fmt.Errorf("user with username %s does not exists", un)
+		}
+
+		var userAlreadyMember bool
+		for _, chatRoom := range user.Chatrooms {
+			if chatRoom.Key == crKey {
+				userAlreadyMember = true
+				break
+			}
+		}
+		if !userAlreadyMember {
+			crs := append(user.Chatrooms, cr)
+			updateCRListForUser(user.Username, crs)
 		}
 	}
 
