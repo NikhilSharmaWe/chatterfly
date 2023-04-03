@@ -65,8 +65,8 @@ func HandleSignup(w http.ResponseWriter, r *http.Request) error {
 			return internalServerError(w, err)
 		}
 
-		du := getUser(user.Username)
-		if du.Username == user.Username {
+		_, err = getUser(user.Username)
+		if err != nil {
 			return permissionDenied(w, fmt.Sprintf("username %s already exists", user.Username))
 		}
 
@@ -106,12 +106,12 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) error {
 	if r.Method == http.MethodPost {
 		un := r.PostFormValue("username")
 		pw := r.PostFormValue("password")
-		user := getUser(un)
-		if user.Username != un {
+		user, err := getUser(un)
+		if err != nil {
 			return fmt.Errorf("user with username %s does not exists", un)
 		}
 
-		err := bcrypt.CompareHashAndPassword(user.Password, []byte(pw))
+		err = bcrypt.CompareHashAndPassword(user.Password, []byte(pw))
 		if err != nil {
 			return permissionDenied(w, "username and password do not match")
 		}
@@ -180,18 +180,17 @@ func HandleCreateChatroom(w http.ResponseWriter, r *http.Request) error {
 			return internalServerError(w, err)
 		}
 
-		var session model.Session
 		cookie, _ := r.Cookie("chatterfly-cookie")
 		sId := cookie.Value
 
-		err = getSession(sId, &session)
+		session, err := getSession(sId)
 		if err != nil {
 			return internalServerError(w, err)
 		}
 
 		un := session.Username
-		user := getUser(un)
-		if user.Username != un {
+		user, err := getUser(un)
+		if err != nil {
 			return internalServerError(w, err) // here I am returing internal server error because here user is not providing any username info so here we dont the cause of the error.
 		}
 		crs := append(user.Chatrooms, cr)
@@ -212,11 +211,10 @@ func HandleChatroom(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 
-	var session model.Session
 	cookie, _ := r.Cookie("chatterfly-cookie")
 	sId := cookie.Value
 
-	err := getSession(sId, &session)
+	session, err := getSession(sId)
 	if err != nil {
 		return internalServerError(w, err)
 	}
@@ -235,8 +233,8 @@ func HandleChatroom(w http.ResponseWriter, r *http.Request) error {
 
 	if r.Method == http.MethodPost {
 		un := r.PostFormValue("invite-user")
-		user := getUser(un)
-		if user.Username != un {
+		user, err := getUser(un)
+		if err != nil {
 			return fmt.Errorf("user with username %s does not exists", un)
 		}
 
@@ -276,11 +274,10 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 
-	var session model.Session
 	cookie, _ := r.Cookie("chatterfly-cookie")
 	sId := cookie.Value
 
-	err := getSession(sId, &session)
+	session, err := getSession(sId)
 	if err != nil {
 		return internalServerError(w, err)
 	}
@@ -315,8 +312,8 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) error {
 
 	messageClient(ws, cr) // this is sending chatroom for displaying the chatroomname on top of chatroom
 
-	user := getUser(un)
-	if user.Username != un {
+	user, err := getUser(un)
+	if err != nil {
 		return internalServerError(w, err)
 	}
 
@@ -349,18 +346,17 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) error {
 
 func SendUserData(w http.ResponseWriter, r *http.Request) error {
 	w.Header().Set("Content-Type", "application/json")
-	var session model.Session
 	cookie, _ := r.Cookie("chatterfly-cookie")
 	sId := cookie.Value
 
-	err := getSession(sId, &session)
+	session, err := getSession(sId)
 	if err != nil {
 		return internalServerError(w, err)
 	}
 
 	un := session.Username
-	user := getUser(un)
-	if user.Username != un {
+	user, err := getUser(un)
+	if err != nil {
 		return internalServerError(w, err)
 	}
 
@@ -410,18 +406,19 @@ func deleteInRedis(key string) error {
 	return nil
 }
 
-func getSession(key string, obj *model.Session) error {
+func getSession(key string) (model.Session, error) {
+	session := model.Session{}
 	jsonObj, err := rdb.Get(key).Result()
 	if err != nil {
-		return err
+		return session, err
 	}
 
-	err = json.Unmarshal([]byte(jsonObj), &obj)
+	err = json.Unmarshal([]byte(jsonObj), &session)
 	if err != nil {
-		return err
+		return session, err
 	}
 
-	return nil
+	return session, nil
 }
 
 func storeInMongo(collection *mongo.Collection, value interface{}) error {
@@ -433,12 +430,15 @@ func storeInMongo(collection *mongo.Collection, value interface{}) error {
 	return nil
 }
 
-func getUser(un string) model.User {
+func getUser(un string) (model.User, error) {
 	user := model.User{}
 	filter := bson.M{"username": un}
-	userCollection.FindOne(context.Background(), filter).Decode(&user)
+	err := userCollection.FindOne(context.Background(), filter).Decode(&user)
+	if err != nil {
+		return user, err
+	}
 
-	return user
+	return user, nil
 }
 
 func getChatRoom(key string) (model.ChatRoom, error) {
