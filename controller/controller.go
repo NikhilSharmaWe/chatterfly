@@ -180,7 +180,11 @@ func HandleCreateChatroom(w http.ResponseWriter, r *http.Request) error {
 		var session model.Session
 		cookie, _ := r.Cookie("chatterfly-cookie")
 		sId := cookie.Value
-		getSession(sId, &session)
+
+		err = getSession(sId, &session)
+		if err != nil {
+			return internalServerError(w, err)
+		}
 
 		un := session.Username
 		user := getUser(w, un)
@@ -270,7 +274,11 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) error {
 	cookie, _ := r.Cookie("chatterfly-cookie")
 	sId := cookie.Value
 
-	getSession(sId, &session)
+	err := getSession(sId, &session)
+	if err != nil {
+		return internalServerError(w, err)
+	}
+
 	un := session.Username
 	fn := session.Firstname
 	crKey := session.ChatRoomKey
@@ -335,11 +343,14 @@ func SendUserData(w http.ResponseWriter, r *http.Request) error {
 	cookie, _ := r.Cookie("chatterfly-cookie")
 	sId := cookie.Value
 
-	getSession(sId, &session)
+	err := getSession(sId, &session)
+	if err != nil {
+		return internalServerError(w, err)
+	}
 	un := session.Username
 	user := getUser(w, un)
 
-	err := json.NewEncoder(w).Encode(user)
+	err = json.NewEncoder(w).Encode(user)
 	if err != nil {
 		return internalServerError(w, err)
 	}
