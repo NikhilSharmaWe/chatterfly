@@ -49,7 +49,7 @@ func init() {
 }
 
 func HandleSignup(w http.ResponseWriter, r *http.Request) error {
-	loggedIn, err := alreadyLoggedIn(w, r)
+	loggedIn, err := alreadyLoggedIn(r)
 	if loggedIn {
 		http.Redirect(w, r, "/chatroom/", http.StatusSeeOther)
 		return nil
@@ -78,7 +78,7 @@ func HandleSignup(w http.ResponseWriter, r *http.Request) error {
 		sID := "session-" + uuid.NewV4().String()
 		session := createSessionFromUser(user)
 
-		err = storeInRedis(sID, w, session)
+		err = storeInRedis(sID, session)
 		if err != nil {
 			return internalServerError(w, err)
 		}
@@ -93,7 +93,7 @@ func HandleSignup(w http.ResponseWriter, r *http.Request) error {
 }
 
 func HandleLogin(w http.ResponseWriter, r *http.Request) error {
-	loggedIn, err := alreadyLoggedIn(w, r)
+	loggedIn, err := alreadyLoggedIn(r)
 	if loggedIn {
 		http.Redirect(w, r, "/chatroom/", http.StatusSeeOther)
 		return nil
@@ -119,7 +119,7 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) error {
 		sID := "session-" + uuid.NewV4().String()
 		session := createSessionFromUser(user)
 
-		err = storeInRedis(sID, w, session)
+		err = storeInRedis(sID, session)
 		if err != nil {
 			return internalServerError(w, err)
 		}
@@ -134,7 +134,7 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) error {
 }
 
 func HandleLogout(w http.ResponseWriter, r *http.Request) error {
-	loggedIn, _ := alreadyLoggedIn(w, r)
+	loggedIn, _ := alreadyLoggedIn(r)
 	if !loggedIn {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return nil
@@ -143,7 +143,7 @@ func HandleLogout(w http.ResponseWriter, r *http.Request) error {
 	cookie, _ := r.Cookie("chatterfly-cookie")
 	sId := cookie.Value
 
-	err := deleteInRedis(sId, w)
+	err := deleteInRedis(sId)
 	if err != nil {
 		return internalServerError(w, err)
 	}
@@ -161,7 +161,7 @@ func HandleLogout(w http.ResponseWriter, r *http.Request) error {
 }
 
 func HandleCreateChatroom(w http.ResponseWriter, r *http.Request) error {
-	loggedIn, _ := alreadyLoggedIn(w, r)
+	loggedIn, _ := alreadyLoggedIn(r)
 	if !loggedIn {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return nil
@@ -206,7 +206,7 @@ func HandleCreateChatroom(w http.ResponseWriter, r *http.Request) error {
 }
 
 func HandleChatroom(w http.ResponseWriter, r *http.Request) error {
-	loggedIn, _ := alreadyLoggedIn(w, r)
+	loggedIn, _ := alreadyLoggedIn(r)
 	if !loggedIn {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return nil
@@ -255,7 +255,7 @@ func HandleChatroom(w http.ResponseWriter, r *http.Request) error {
 
 	session.ChatRoomKey = crKey
 	// update the session with the chatroomkey
-	err = storeInRedis(sId, w, session)
+	err = storeInRedis(sId, session)
 	if err != nil {
 		return internalServerError(w, err)
 	}
@@ -270,7 +270,7 @@ func PathWithoutFS(w http.ResponseWriter, r *http.Request) {
 }
 
 func HandleConnections(w http.ResponseWriter, r *http.Request) error {
-	loggedIn, _ := alreadyLoggedIn(w, r)
+	loggedIn, _ := alreadyLoggedIn(r)
 	if !loggedIn {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return nil
@@ -372,7 +372,7 @@ func SendUserData(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func alreadyLoggedIn(w http.ResponseWriter, r *http.Request) (bool, error) {
+func alreadyLoggedIn(r *http.Request) (bool, error) {
 	cookie, err := r.Cookie("chatterfly-cookie")
 	if err == http.ErrNoCookie {
 		return false, nil
@@ -388,7 +388,7 @@ func alreadyLoggedIn(w http.ResponseWriter, r *http.Request) (bool, error) {
 	return true, nil
 }
 
-func storeInRedis(key string, w http.ResponseWriter, value interface{}) error {
+func storeInRedis(key string, value interface{}) error {
 	json, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -401,7 +401,7 @@ func storeInRedis(key string, w http.ResponseWriter, value interface{}) error {
 	return nil
 }
 
-func deleteInRedis(key string, w http.ResponseWriter) error {
+func deleteInRedis(key string) error {
 	_, err := rdb.Del(key).Result()
 	if err != nil {
 		return err
