@@ -114,8 +114,7 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) error {
 		}
 
 		sID := "session-" + uuid.NewV4().String()
-		session := new(model.Session)
-		createSessionFromUser(user)
+		session := createSessionFromUser(user)
 
 		err = storeInRedis(sID, w, session)
 		if err != nil {
