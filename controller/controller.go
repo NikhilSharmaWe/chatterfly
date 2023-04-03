@@ -65,7 +65,7 @@ func HandleSignup(w http.ResponseWriter, r *http.Request) error {
 			return internalServerError(w, err)
 		}
 
-		du := getUser(w, user.Username)
+		du := getUser(user.Username)
 		if du.Username == user.Username {
 			return permissionDenied(w, fmt.Sprintf("username %s already exists", user.Username))
 		}
@@ -106,7 +106,10 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) error {
 	if r.Method == http.MethodPost {
 		un := r.PostFormValue("username")
 		pw := r.PostFormValue("password")
-		user := getUser(w, un)
+		user := getUser(un)
+		if user.Username != un {
+			return fmt.Errorf("user with username %s does not exists", un)
+		}
 
 		err := bcrypt.CompareHashAndPassword(user.Password, []byte(pw))
 		if err != nil {
@@ -187,7 +190,10 @@ func HandleCreateChatroom(w http.ResponseWriter, r *http.Request) error {
 		}
 
 		un := session.Username
-		user := getUser(w, un)
+		user := getUser(un)
+		if user.Username != un {
+			return internalServerError(w, err) // here I am returing internal server error because here user is not providing any username info so here we dont the cause of the error.
+		}
 		crs := append(user.Chatrooms, cr)
 
 		updateCRListForUser(user.Username, crs)
@@ -218,7 +224,7 @@ func HandleChatroom(w http.ResponseWriter, r *http.Request) error {
 	params := mux.Vars(r)
 	crKey := params["crKey"]
 
-	cr, err := getChatRoom(w, crKey)
+	cr, err := getChatRoom(crKey)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			return fmt.Errorf("chatroom does not exists")
@@ -229,7 +235,7 @@ func HandleChatroom(w http.ResponseWriter, r *http.Request) error {
 
 	if r.Method == http.MethodPost {
 		un := r.PostFormValue("invite-user")
-		user := getUser(w, un)
+		user := getUser(un)
 		if user.Username != un {
 			return fmt.Errorf("user with username %s does not exists", un)
 		}
@@ -285,7 +291,7 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) error {
 
 	chat := model.Chat{}
 	filter := bson.M{"key": crKey}
-	cr, _ := getChatRoom(w, crKey)
+	cr, _ := getChatRoom(crKey)
 
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -309,7 +315,11 @@ func HandleConnections(w http.ResponseWriter, r *http.Request) error {
 
 	messageClient(ws, cr) // this is sending chatroom for displaying the chatroomname on top of chatroom
 
-	user := getUser(w, un)
+	user := getUser(un)
+	if user.Username != un {
+		return internalServerError(w, err)
+	}
+
 	var userAlreadyMember bool
 	for _, chatRoom := range user.Chatrooms {
 		if chatRoom.Key == crKey {
@@ -347,8 +357,12 @@ func SendUserData(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return internalServerError(w, err)
 	}
+
 	un := session.Username
-	user := getUser(w, un)
+	user := getUser(un)
+	if user.Username != un {
+		return internalServerError(w, err)
+	}
 
 	err = json.NewEncoder(w).Encode(user)
 	if err != nil {
@@ -419,7 +433,7 @@ func storeInMongo(collection *mongo.Collection, value interface{}) error {
 	return nil
 }
 
-func getUser(w http.ResponseWriter, un string) model.User {
+func getUser(un string) model.User {
 	user := model.User{}
 	filter := bson.M{"username": un}
 	userCollection.FindOne(context.Background(), filter).Decode(&user)
@@ -427,7 +441,7 @@ func getUser(w http.ResponseWriter, un string) model.User {
 	return user
 }
 
-func getChatRoom(w http.ResponseWriter, key string) (model.ChatRoom, error) {
+func getChatRoom(key string) (model.ChatRoom, error) {
 	chatRoom := model.ChatRoom{}
 	filter := bson.M{"key": key}
 
