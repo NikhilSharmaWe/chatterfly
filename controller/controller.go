@@ -66,7 +66,7 @@ func HandleSignup(w http.ResponseWriter, r *http.Request) error {
 		}
 
 		_, err = getUser(user.Username)
-		if err != nil {
+		if err == nil {
 			return permissionDenied(w, fmt.Sprintf("username %s already exists", user.Username))
 		}
 
